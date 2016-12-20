@@ -1,0 +1,53 @@
+From fba6ea9e8942c8c1acb1bb4aba0c75133dff84cd Mon Sep 17 00:00:00 2001
+From: Sven Eckelmann <sven@narfation.org>
+Date: Wed, 25 Mar 2015 15:21:26 +0100
+Subject: [PATCH] netfilter: nf_ct_sip: don't actually drop packets when sip
+ contracking failed
+
+This doesn't affect the log output and will only change the behaviour of the
+actual conntracker.
+
+Forwarded: not-needed
+ This is a special requirement by Open Mesh and not the goal of upstream
+---
+ net/netfilter/nf_conntrack_sip.c | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+--- a/net/netfilter/nf_conntrack_sip.c
++++ b/net/netfilter/nf_conntrack_sip.c
+@@ -1506,7 +1506,7 @@ static int sip_help_tcp(struct sk_buff *
+ 	nf_ct_refresh(ct, skb, sip_timeout * HZ);
+ 
+ 	if (unlikely(skb_linearize(skb)))
+-		return NF_DROP;
++		return NF_ACCEPT;
+ 
+ 	dptr = skb->data + dataoff;
+ 	datalen = skb->len - dataoff;
+@@ -1560,7 +1560,7 @@ static int sip_help_tcp(struct sk_buff *
+ 			hooks->seq_adjust(skb, protoff, tdiff);
+ 	}
+ 
+-	return ret;
++	return NF_ACCEPT;
+ }
+ 
+ static int sip_help_udp(struct sk_buff *skb, unsigned int protoff,
+@@ -1577,14 +1577,15 @@ static int sip_help_udp(struct sk_buff *
+ 	nf_ct_refresh(ct, skb, sip_timeout * HZ);
+ 
+ 	if (unlikely(skb_linearize(skb)))
+-		return NF_DROP;
++		return NF_ACCEPT;
+ 
+ 	dptr = skb->data + dataoff;
+ 	datalen = skb->len - dataoff;
+ 	if (datalen < strlen("SIP/2.0 200"))
+ 		return NF_ACCEPT;
+ 
+-	return process_sip_msg(skb, ct, protoff, dataoff, &dptr, &datalen);
++	process_sip_msg(skb, ct, protoff, dataoff, &dptr, &datalen);
++	return NF_ACCEPT;
+ }
+ 
+ static struct nf_conntrack_helper sip[MAX_PORTS][4] __read_mostly;

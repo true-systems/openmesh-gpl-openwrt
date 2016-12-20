@@ -1,0 +1,7 @@
+#! /bin/sh
+
+logfile=/etc/dashboard/reboot_$1.log
+mkdir -p /etc/dashboard/
+date > ${logfile}
+top -b -n1 >> ${logfile}
+sync

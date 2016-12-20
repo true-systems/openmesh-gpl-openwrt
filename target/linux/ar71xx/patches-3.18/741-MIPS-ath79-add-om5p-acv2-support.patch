@@ -1,0 +1,39 @@
+--- linux-3.8.7_orig/arch/mips/ath79/Kconfig	2015-02-27 09:17:02.631159867 -0800
++++ linux-3.8.7/arch/mips/ath79/Kconfig	2015-03-04 16:56:10.644494964 -0800
+@@ -438,6 +438,16 @@
+ 	select ATH79_DEV_M25P80
+ 	select ATH79_DEV_WMAC
+ 
++config ATH79_MACH_OM5P_ACv2
++	bool "OpenMesh OM5P-ACv2 board support"
++	select SOC_QCA955X
++	select ATH79_DEV_AP9X_PCI if PCI
++	select ATH79_DEV_ETH
++	select ATH79_DEV_GPIO_BUTTONS
++	select ATH79_DEV_LEDS_GPIO
++	select ATH79_DEV_M25P80
++	select ATH79_DEV_WMAC
++
+ config ATH79_MACH_MR600
+ 	bool "OpenMesh MR600 board support"
+ 	select SOC_AR934X
+--- linux-3.8.7_orig/arch/mips/ath79/machtypes.h	2015-02-27 09:17:02.627159867 -0800
++++ linux-3.8.7/arch/mips/ath79/machtypes.h	2015-03-04 16:55:09.704495317 -0800
+@@ -63,6 +63,7 @@
+ 	ATH79_MACH_OM2P,		/* OpenMesh OM2P */
+ 	ATH79_MACH_OM5P_AN,		/* OpenMesh OM5P-AN */
+ 	ATH79_MACH_OM5P_AC,		/* OpenMesh OM5P-AC */
++	ATH79_MACH_OM5P_ACv2,		/* OpenMesh OM5P-ACv2 */
+ 	ATH79_MACH_OM5P,		/* OpenMesh OM5P */
+ 	ATH79_MACH_PB42,		/* Atheros PB42 */
+ 	ATH79_MACH_PB92,		/* Atheros PB92 */
+--- linux-3.8.7_orig/arch/mips/ath79/Makefile	2015-02-27 09:17:02.627159867 -0800
++++ linux-3.8.7/arch/mips/ath79/Makefile	2015-03-04 16:56:46.572494755 -0800
+@@ -70,6 +70,7 @@
+ obj-$(CONFIG_ATH79_MACH_OM2P)		+= mach-om2p.o
+ obj-$(CONFIG_ATH79_MACH_OM5P)		+= mach-om5p.o
+ obj-$(CONFIG_ATH79_MACH_OM5P_AC)	+= mach-om5pac.o
++obj-$(CONFIG_ATH79_MACH_OM5P_ACv2)	+= mach-om5pacv2.o
+ obj-$(CONFIG_ATH79_MACH_PB42)		+= mach-pb42.o
+ obj-$(CONFIG_ATH79_MACH_PB44)		+= mach-pb44.o
+ obj-$(CONFIG_ATH79_MACH_PB92)		+= mach-pb92.o

@@ -1,0 +1,10 @@
+#! /bin/sh
+
+if [ -x /usr/bin/ng_login ]; then
+	if ! /usr/bin/ng_login; then
+		echo "shell disabled..."
+		exit 0
+	fi
+fi
+
+exec /bin/ash --login

@@ -1,0 +1,41 @@
+Forwarded: not-needed
+ Only for internal debugging purposes
+
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -860,11 +860,35 @@ static int prepare_signal(int sig, struc
+ 	struct signal_struct *signal = p->signal;
+ 	struct task_struct *t;
+ 	char tmpname[TASK_COMM_LEN];
++	struct task_struct *task;
++	struct task_struct *parent;
++	pid_t parent_pid;
+ 
+ 	if (p->pid == 1 &&
+ 	    (sig == SIGUSR1 || sig == SIGUSR2 || sig == SIGTERM)) {
+ 		get_task_comm(tmpname, current);
+ 		printk("Generate signal %d to init (1) by %s (%d)\n", sig, tmpname, current->pid);
++		if (strcmp(tmpname, "halt") != 0 &&
++		    strcmp(tmpname, "reboot") != 0 &&
++		    strcmp(tmpname, "poweroff") != 0) {
++			rcu_read_lock();
++			for_each_process(task) {
++				task_lock(task);
++
++				parent = rcu_dereference(task->real_parent);
++				if (parent)
++					parent_pid = parent->pid;
++				else
++					parent_pid = 0;
++
++				get_task_comm(tmpname, task);
++
++				printk("[%5d] %5d %s\n",
++					task->pid, parent_pid, tmpname);
++				task_unlock(task);
++			}
++			rcu_read_unlock();
++		}
+ 	}
+ 
+ 	if (unlikely(signal->flags & SIGNAL_GROUP_EXIT)) {

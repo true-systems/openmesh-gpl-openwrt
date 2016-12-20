@@ -1,0 +1,96 @@
+Forwarded: no
+
+--- a/networking/nslookup.c
++++ b/networking/nslookup.c
+@@ -64,20 +64,36 @@
+  * ns3.kernel.org  internet address = 204.152.191.36
+  */
+ 
+-static int print_host(const char *hostname, const char *header)
++static int print_host(const char *hostname, const char *header, const char *bind_addr)
+ {
+ 	/* We can't use xhost2sockaddr() - we want to get ALL addresses,
+ 	 * not just one */
+ 	struct addrinfo *result = NULL;
+ 	int rc;
+ 	struct addrinfo hint;
++	struct sockaddr_in bind_sin;
+ 
+ 	memset(&hint, 0 , sizeof(hint));
+ 	/* hint.ai_family = AF_UNSPEC; - zero anyway */
+ 	/* Needed. Or else we will get each address thrice (or more)
+ 	 * for each possible socket type (tcp,udp,raw...): */
+ 	hint.ai_socktype = SOCK_STREAM;
++	hint.ai_family = AF_INET;
+ 	// hint.ai_flags = AI_CANONNAME;
++
++	if (bind_addr) {
++		rc = inet_pton(AF_INET, bind_addr, &bind_sin.sin_addr);
++		if (rc != 1) {
++			printf("invalid bind address: %s\n", bind_addr);
++			goto getaddr;
++		}
++
++		bind_sin.sin_family = AF_INET;
++		bind_sin.sin_port = 0;
++		hint.ai_addr = (struct sockaddr *)&bind_sin;
++	}
++
++getaddr:
+ 	rc = getaddrinfo(hostname, NULL /*service*/, &hint, &result);
+ 
+ 	if (rc == 0) {
+@@ -114,7 +130,7 @@ static int print_host(const char *hostna
+ }
+ 
+ /* lookup the default nameserver and display it */
+-static void server_print(void)
++static void server_print(const char *bind_addr)
+ {
+ 	char *server;
+ 	struct sockaddr *sa;
+@@ -126,7 +142,7 @@ static void server_print(void)
+ 		sa = (struct sockaddr*)&_res.nsaddr_list[0];
+ 	server = xmalloc_sockaddr2dotted_noport(sa);
+ 
+-	print_host(server, "Server:");
++	print_host(server, "Server:", bind_addr);
+ 	if (ENABLE_FEATURE_CLEAN_UP)
+ 		free(server);
+ 	bb_putchar('\n');
+@@ -169,12 +185,18 @@ static void set_default_dns(const char *
+ int nslookup_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
+ int nslookup_main(int argc, char **argv)
+ {
++	char *bind_addr = NULL;
++
++	getopt32(argv, "b:", &bind_addr);
++	argv += optind - 1;
++	argc -= optind - 1;
++
+ 	/* We allow 1 or 2 arguments.
+ 	 * The first is the name to be looked up and the second is an
+ 	 * optional DNS server with which to do the lookup.
+ 	 * More than 3 arguments is an error to follow the pattern of the
+ 	 * standard nslookup */
+-	if (!argv[1] || argv[1][0] == '-' || argc > 3)
++	if (!argv[1] || argv[1][0] == '-' || argc > 4)
+ 		bb_show_usage();
+ 
+ 	/* initialize DNS structure _res used in printing the default
+@@ -186,7 +208,7 @@ int nslookup_main(int argc, char **argv)
+ 
+ 	set_default_dns(argv[2]);
+ 
+-	server_print();
++	server_print(bind_addr);
+ 
+ 	/* getaddrinfo and friends are free to request a resolver
+ 	 * reinitialization. Just in case, set_default_dns() again
+@@ -196,5 +218,5 @@ int nslookup_main(int argc, char **argv)
+ 	 */
+ 	set_default_dns(argv[2]);
+ 
+-	return print_host(argv[1], "Name:");
++	return print_host(argv[1], "Name:", bind_addr);
+ }

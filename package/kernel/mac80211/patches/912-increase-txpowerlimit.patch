@@ -1,0 +1,29 @@
+Forwarded: not-needed
+ Maybe breaks regulatory requirements of non programmed (non US) regdomains.
+ Maybe isn't needed anymore and should be tested
+
+--- a/net/wireless/core.c
++++ b/net/wireless/core.c
+@@ -558,7 +558,7 @@ int wiphy_register(struct wiphy *wiphy)
+ 				sband->channels[i].flags;
+ 			sband->channels[i].orig_mag = INT_MAX;
+ 			sband->channels[i].orig_mpwr =
+-				sband->channels[i].max_power;
++				max(sband->channels[i].max_power, 30);
+ 			sband->channels[i].band = band;
+ 		}
+ 
+--- a/net/wireless/reg.c
++++ b/net/wireless/reg.c
+@@ -883,9 +883,9 @@ static void handle_channel(struct wiphy
+ 		 */
+ 		chan->flags = chan->orig_flags =
+ 			map_regdom_flags(reg_rule->flags) | bw_flags;
+-		chan->max_antenna_gain = chan->orig_mag =
++		chan->max_antenna_gain =
+ 			(int) MBI_TO_DBI(power_rule->max_antenna_gain);
+-		chan->max_reg_power = chan->max_power = chan->orig_mpwr =
++		chan->max_reg_power = chan->max_power =
+ 			(int) MBM_TO_DBM(power_rule->max_eirp);
+ 		return;
+ 	}

@@ -1,0 +1,13 @@
+Forwarded: no
+
+--- a/networking/udhcp/dhcpc.c
++++ b/networking/udhcp/dhcpc.c
+@@ -1259,7 +1259,7 @@ int udhcpc_main(int argc UNUSED_PARAM, c
+ 	IF_FEATURE_UDHCP_PORT(CLIENT_PORT = 68;)
+ 	client_config.interface = "eth0";
+ 	client_config.script = CONFIG_UDHCPC_DEFAULT_SCRIPT;
+-	str_V = "udhcp "BB_VER;
++	str_V = "udhcp ng "BB_VER;
+ 
+ 	/* Parse command line */
+ 	/* O,x: list; -T,-t,-A take numeric param */

@@ -1,0 +1,37 @@
+From: Vivek Natarajan <nataraja@qti.qualcomm.com>
+Date: Mon, 24 Nov 2014 17:26:22 +0530
+Subject: [PATCH] ath: Fix a false radar detection pattern
+
+For FCC and JP, in one of the radar patterns, PPB and PRF seems to be
+interchanged leading to frequent incorrect radar detections.
+
+Signed-off-by: Vivek Natarajan <nataraja@qti.qualcomm.com>
+
+Forwarded: http://lists.infradead.org/pipermail/ath10k/2014-November/003752.html
+Applied-Upstream: https://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git/commit/?id=34b5d778b583104d91534b4673472b7820e0c0b3
+---
+diff --git a/drivers/net/wireless/ath/dfs_pattern_detector.c b/drivers/net/wireless/ath/dfs_pattern_detector.c
+index 650be79..cfd0554 100644
+--- a/drivers/net/wireless/ath/dfs_pattern_detector.c
++++ b/drivers/net/wireless/ath/dfs_pattern_detector.c
+@@ -86,7 +86,7 @@ static const struct radar_detector_specs fcc_radar_ref_types[] = {
+ 	FCC_PATTERN(1, 0, 5, 150, 230, 1, 23),
+ 	FCC_PATTERN(2, 6, 10, 200, 500, 1, 16),
+ 	FCC_PATTERN(3, 11, 20, 200, 500, 1, 12),
+-	FCC_PATTERN(4, 50, 100, 1000, 2000, 20, 1),
++	FCC_PATTERN(4, 50, 100, 1000, 2000, 1, 20),
+ 	FCC_PATTERN(5, 0, 1, 333, 333, 1, 9),
+ };
+ 
+@@ -105,7 +105,7 @@ static const struct radar_detector_specs jp_radar_ref_types[] = {
+ 	JP_PATTERN(4, 0, 5, 150, 230, 1, 23),
+ 	JP_PATTERN(5, 6, 10, 200, 500, 1, 16),
+ 	JP_PATTERN(6, 11, 20, 200, 500, 1, 12),
+-	JP_PATTERN(7, 50, 100, 1000, 2000, 20, 1),
++	JP_PATTERN(7, 50, 100, 1000, 2000, 1, 20),
+ 	JP_PATTERN(5, 0, 1, 333, 333, 1, 9),
+ };
+ 
+-- 
+2.1.3
+

@@ -1,0 +1,172 @@
+From ff765ca843853260e3055cee71fd97ae8b5693fa Mon Sep 17 00:00:00 2001
+From: Sven Eckelmann <sven@narfation.org>
+Date: Thu, 6 Mar 2014 12:46:38 +0100
+Subject: [PATCH] dnsmasq: Use an 'all match' instead of an 'best match only'
+ ipset
+
+open-mesh needs to add all matched domain strings to different ipsets to
+support multiple SSIDs with different/same settings for the walledgarden. It
+must be avoided that matched IPs for something like www.foobar.com are only
+written to SSID1 when the actual user requesting the page is actually on SSID2.
+This would happen when SSID1 and SSID2 both have a filter for foobar.com but
+are not part of the same ipset-line.
+
+This would become an even bigger problem when SSID1 has a filter for
+www.foobar.com and SSID2 only as one for foobar.com. SSID2 would never get the
+IP through this filter+DNS request because SSID has a "better matching" filter.
+
+A workaround is to accept all matches and don't differenciate between "better
+or equal good match" and "less good match". This implementation may work for
+open-mesh but is most likely not the preferred solution for upstream.
+
+Forwarded: not-needed
+ Changes the matching algorithm in a way upstream doesn't want the matching
+ to happen.
+---
+ src/dnsmasq.h |  2 +-
+ src/forward.c | 27 ++++++++-------------------
+ src/rfc1035.c | 27 ++++++++++++++++++++-------
+ 3 files changed, 29 insertions(+), 27 deletions(-)
+
+--- a/src/dnsmasq.h
++++ b/src/dnsmasq.h
+@@ -1081,7 +1081,7 @@ size_t setup_reply(struct dns_header *he
+ 		   struct all_addr *addrp, unsigned int flags,
+ 		   unsigned long local_ttl);
+ int extract_addresses(struct dns_header *header, size_t qlen, char *namebuff, 
+-		      time_t now, char **ipsets, int is_sign, int checkrebind,
++		      time_t now, char *orig_name, int is_sign, int checkrebind,
+ 		      int no_cache, int secure, int *doctored);
+ size_t answer_request(struct dns_header *header, char *limit, size_t qlen,  
+ 		      struct in_addr local_addr, struct in_addr local_netmask, 
+--- a/src/forward.c
++++ b/src/forward.c
+@@ -526,7 +526,7 @@ static size_t process_reply(struct dns_h
+ 			    int no_cache, int cache_secure, int ad_reqd, int do_bit, int added_pheader, int check_subnet, union mysockaddr *query_source)
+ {
+   unsigned char *pheader, *sizep;
+-  char **sets = 0;
++  char *orig_name = NULL;
+   int munged = 0, is_sign;
+   size_t plen; 
+ 
+@@ -534,25 +534,7 @@ static size_t process_reply(struct dns_h
+   (void) do_bit;
+ 
+ #ifdef HAVE_IPSET
+-  if (daemon->ipsets && extract_request(header, n, daemon->namebuff, NULL))
+-    {
+-      /* Similar algorithm to search_servers. */
+-      struct ipsets *ipset_pos;
+-      unsigned int namelen = strlen(daemon->namebuff);
+-      unsigned int matchlen = 0;
+-      for (ipset_pos = daemon->ipsets; ipset_pos; ipset_pos = ipset_pos->next) 
+-	{
+-	  unsigned int domainlen = strlen(ipset_pos->domain);
+-	  char *matchstart = daemon->namebuff + namelen - domainlen;
+-	  if (namelen >= domainlen && hostname_isequal(matchstart, ipset_pos->domain) &&
+-	      (domainlen == 0 || namelen == domainlen || *(matchstart - 1) == '.' ) &&
+-	      domainlen >= matchlen) 
+-	    {
+-	      matchlen = domainlen;
+-	      sets = ipset_pos->sets;
+-	    }
+-	}
+-    }
++  orig_name = strdup(daemon->namebuff);
+ #endif
+   
+   /* If upstream is advertising a larger UDP packet size
+@@ -572,6 +554,7 @@ static size_t process_reply(struct dns_h
+       if (check_subnet && !check_source(header, plen, pheader, query_source))
+ 	{
+ 	  my_syslog(LOG_WARNING, _("discarding DNS reply: subnet option mismatch"));
++	  free(orig_name);
+ 	  return 0;
+ 	}
+       
+@@ -586,8 +569,10 @@ static size_t process_reply(struct dns_h
+   if (!is_sign && !option_bool(OPT_DNSSEC_PROXY))
+      header->hb4 &= ~HB4_AD;
+   
+-  if (OPCODE(header) != QUERY || (RCODE(header) != NOERROR && RCODE(header) != NXDOMAIN))
++  if (OPCODE(header) != QUERY || (RCODE(header) != NOERROR && RCODE(header) != NXDOMAIN)) {
++    free(orig_name);
+     return resize_packet(header, n, pheader, plen);
++  }
+   
+   /* Complain loudly if the upstream server is non-recursive. */
+   if (!(header->hb4 & HB4_RA) && RCODE(header) == NOERROR && ntohs(header->ancount) == 0 &&
+@@ -624,7 +609,7 @@ static size_t process_reply(struct dns_h
+ 	  cache_secure = 0;
+ 	}
+       
+-      if (extract_addresses(header, n, daemon->namebuff, now, sets, is_sign, check_rebind, no_cache, cache_secure, &doctored))
++      if (extract_addresses(header, n, daemon->namebuff, now, orig_name, is_sign, check_rebind, no_cache, cache_secure, &doctored))
+ 	{
+ 	  my_syslog(LOG_WARNING, _("possible DNS-rebind attack detected: %s"), daemon->namebuff);
+ 	  munged = 1;
+@@ -670,6 +655,7 @@ static size_t process_reply(struct dns_h
+   /* the bogus-nxdomain stuff, doctor and NXDOMAIN->NODATA munging can all elide
+      sections of the packet. Find the new length here and put back pseudoheader
+      if it was removed. */
++  free(orig_name);
+   return resize_packet(header, n, pheader, plen);
+ }
+ 
+--- a/src/rfc1035.c
++++ b/src/rfc1035.c
+@@ -897,16 +897,16 @@ static int find_soa(struct dns_header *h
+    expired and cleaned out that way. 
+    Return 1 if we reject an address because it look like part of dns-rebinding attack. */
+ int extract_addresses(struct dns_header *header, size_t qlen, char *name, time_t now, 
+-		      char **ipsets, int is_sign, int check_rebind, int no_cache_dnssec, int secure, int *doctored)
++		      char *orig_name, int is_sign, int check_rebind, int no_cache_dnssec, int secure, int *doctored)
+ {
+   unsigned char *p, *p1, *endrr, *namep;
+   int i, j, qtype, qclass, aqtype, aqclass, ardlen, res, searched_soa = 0;
+   unsigned long ttl = 0;
+   struct all_addr addr;
+ #ifdef HAVE_IPSET
+-  char **ipsets_cur;
++  char **ipsets_cur, **ipsets;
+ #else
+-  (void)ipsets; /* unused */
++  (void)orig_name; /* unused */
+ #endif
+   
+   cache_start_insert();
+@@ -1098,14 +1098,26 @@ int extract_addresses(struct dns_header
+ 			return 1;
+ 		      
+ #ifdef HAVE_IPSET
+-		      if (ipsets && (flags & (F_IPV4 | F_IPV6)))
++			  /* Similar algorithm to search_servers. */
++			  struct ipsets *ipset_pos;
++			  unsigned int namelen = strlen(orig_name);
++			  for (ipset_pos = daemon->ipsets; ipset_pos; ipset_pos = ipset_pos->next)
+ 			{
+-			  ipsets_cur = ipsets;
+-			  while (*ipsets_cur)
+-			    {
+-			      log_query((flags & (F_IPV4 | F_IPV6)) | F_IPSET, name, &addr, *ipsets_cur);
+-			      add_to_ipset(*ipsets_cur++, &addr, flags, 0);
+-			    }
++			      unsigned int domainlen = strlen(ipset_pos->domain);
++			      char *matchstart = orig_name + namelen - domainlen;
++			      if (namelen >= domainlen && hostname_isequal(matchstart, ipset_pos->domain) &&
++				  (domainlen == 0 || namelen == domainlen || *(matchstart - 1) == '.' )) {
++				ipsets = ipset_pos->sets;
++
++				if (ipsets && (flags & (F_IPV4 | F_IPV6)))
++				  {
++				    ipsets_cur = ipsets;
++				    while (*ipsets_cur) {
++                                       log_query((flags & (F_IPV4 | F_IPV6)) | F_IPSET, name, &addr, *ipsets_cur);
++					add_to_ipset(*ipsets_cur++, &addr, flags, 0);
++                                   }
++				  }
++			      }
+ 			}
+ #endif
+ 		      

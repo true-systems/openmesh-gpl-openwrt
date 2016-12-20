@@ -1,0 +1,32 @@
+Forwarded: not-needed
+ Only for internal debugging purposes
+
+--- a/kernel/crashlog.c
++++ b/kernel/crashlog.c
+@@ -48,7 +48,7 @@ struct crashlog_data {
+ 	u8 data[];
+ };
+ 
+-static struct debugfs_blob_wrapper crashlog_blob;
++static struct debugfs_blob_wrapper crashlog_blob, warmstart_blob;
+ static unsigned long crashlog_addr = 0;
+ static struct crashlog_data *crashlog_buf;
+ static struct kmsg_dumper dump;
+@@ -92,9 +92,17 @@ void __meminit crashlog_init_memblock(ph
+ 
+ static void __init crashlog_copy(void)
+ {
++
+ 	if (crashlog_buf->magic != CRASHLOG_MAGIC)
+ 		return;
+ 
++	/* a marker is most likely created by an earlier boot, therefore
++	 * it may have been a warmstart */
++	warmstart_blob.size = 0;
++	warmstart_blob.data = NULL;
++
++	debugfs_create_blob("crashlog_warmstart", 0600, NULL, &warmstart_blob);
++
+ 	if (!crashlog_buf->len || crashlog_buf->len >
+ 	    CRASHLOG_SIZE - sizeof(*crashlog_buf))
+ 		return;

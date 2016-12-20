@@ -1,0 +1,75 @@
+Forwarded: not-needed
+ Only for internal debugging purposes
+
+--- a/kernel/Makefile
++++ b/kernel/Makefile
+@@ -9,7 +9,7 @@ obj-y     = fork.o exec_domain.o panic.o
+ 	    extable.o params.o \
+ 	    kthread.o sys_ni.o nsproxy.o \
+ 	    notifier.o ksysfs.o cred.o reboot.o \
+-	    async.o range.o groups.o smpboot.o
++	    async.o range.o groups.o smpboot.o reboot_cause.o
+ 
+ ifdef CONFIG_FUNCTION_TRACER
+ # Do not trace debug files and internal ftrace files
+--- /dev/null
++++ b/kernel/reboot_cause.c
+@@ -0,0 +1,58 @@
++#include <linux/module.h>
++#include <linux/notifier.h>
++#include <linux/reboot.h>
++#include <linux/sched.h>
++
++static int reboot_callback(struct notifier_block *self,
++				unsigned long val,
++				void *data)
++{
++	struct task_struct *task;
++	struct task_struct *parent;
++	pid_t parent_pid;
++	char tmpname[TASK_COMM_LEN];
++
++	get_task_comm(tmpname, current);
++
++	printk("Reboot event %lu by %s (%d)\n", val, tmpname, current->pid);
++
++	printk("[ pid ]  ppid name\n");
++	rcu_read_lock();
++	for_each_process(task) {
++		task_lock(task);
++
++		parent = rcu_dereference(task->real_parent);
++		if (parent)
++			parent_pid = parent->pid;
++		else
++			parent_pid = 0;
++
++		get_task_comm(tmpname, task);
++
++		printk("[%5d] %5d %s\n",
++			task->pid, parent_pid, tmpname);
++		task_unlock(task);
++	}
++	rcu_read_unlock();
++
++	return NOTIFY_DONE;
++}
++
++static struct notifier_block reboot_notifier = {
++	.notifier_call = reboot_callback,
++};
++
++static int __init reboot_cause_init(void)
++{
++	return register_reboot_notifier(&reboot_notifier);
++}
++
++static void __exit reboot_cause_exit(void)
++{
++	unregister_reboot_notifier(&reboot_notifier);
++}
++
++module_init(reboot_cause_init);
++module_exit(reboot_cause_exit);
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Open Mesh");

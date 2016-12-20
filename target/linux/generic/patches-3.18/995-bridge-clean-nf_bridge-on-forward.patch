@@ -1,0 +1,20 @@
+Forwarded: http://thread.gmane.org/gmane.linux.network/285096
+
+was rejected and will later be implemented in batman-adv
+
+--- linux-3.8.7/net/bridge/br_forward.c.orig	2013-11-13 15:52:56.872393721 +0100
++++ linux-3.8.7/net/bridge/br_forward.c	2013-11-13 15:56:22.304387651 +0100
+@@ -48,6 +48,13 @@
+ 	} else {
+ 		skb_push(skb, ETH_HLEN);
+ 		br_drop_fake_rtable(skb);
++
++#ifdef CONFIG_BRIDGE_NETFILTER
++		/* clean the NF bridge data */
++		nf_bridge_put(skb->nf_bridge);
++		skb->nf_bridge = NULL;
++#endif
++
+ 		dev_queue_xmit(skb);
+ 	}
+ 

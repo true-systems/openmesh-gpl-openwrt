@@ -1,0 +1,24 @@
+From 642908aa590dc3575d80f2f113c9c722104a6315 Mon Sep 17 00:00:00 2001
+From: Sven Eckelmann <sven@narfation.org>
+Date: Fri, 19 Feb 2016 11:52:54 +0100
+Subject: [PATCH] Bug when someone frees a not aligned address
+
+---
+ mm/slub.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/mm/slub.c b/mm/slub.c
+index ae7b9f1..a313903 100644
+--- a/mm/slub.c
++++ b/mm/slub.c
+@@ -2644,6 +2644,7 @@ static __always_inline void slab_free(struct kmem_cache *s,
+ 	unsigned long tid;
+ 
+ 	slab_free_hook(s, x);
++	BUG_ON((uintptr_t)object % 4);
+ 
+ redo:
+ 	/*
+-- 
+2.7.0
+

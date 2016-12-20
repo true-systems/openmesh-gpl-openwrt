@@ -1,0 +1,107 @@
+Forwarded: no
+
+--- a/networking/udhcp/dhcpc.c
++++ b/networking/udhcp/dhcpc.c
+@@ -46,6 +46,7 @@ static const char udhcpc_longopts[] ALIG
+ 	"request\0"        Required_argument "r"
+ 	"script\0"         Required_argument "s"
+ 	"timeout\0"        Required_argument "T"
++	"lease_sec\0"      Required_argument "l"
+ 	"retries\0"        Required_argument "t"
+ 	"tryagain\0"       Required_argument "A"
+ 	"syslog\0"         No_argument       "S"
+@@ -73,16 +74,17 @@ enum {
+ 	OPT_r = 1 << 10,
+ 	OPT_s = 1 << 11,
+ 	OPT_T = 1 << 12,
+-	OPT_t = 1 << 13,
+-	OPT_S = 1 << 14,
+-	OPT_A = 1 << 15,
+-	OPT_O = 1 << 16,
+-	OPT_o = 1 << 17,
+-	OPT_x = 1 << 18,
+-	OPT_f = 1 << 19,
+-	OPT_B = 1 << 20,
++	OPT_l = 1 << 13,
++	OPT_t = 1 << 14,
++	OPT_S = 1 << 15,
++	OPT_A = 1 << 16,
++	OPT_O = 1 << 17,
++	OPT_o = 1 << 18,
++	OPT_x = 1 << 19,
++	OPT_f = 1 << 20,
++	OPT_B = 1 << 21,
+ /* The rest has variable bit positions, need to be clever */
+-	OPTBIT_B = 20,
++	OPTBIT_B = 21,
+ 	USE_FOR_MMU(             OPTBIT_b,)
+ 	IF_FEATURE_UDHCPC_ARPING(OPTBIT_a,)
+ 	IF_FEATURE_UDHCP_PORT(   OPTBIT_P,)
+@@ -1240,6 +1242,7 @@ int udhcpc_main(int argc UNUSED_PARAM, c
+ 	int tryagain_timeout = 20;
+ 	int discover_timeout = 3;
+ 	int discover_retries = 3;
++	int lease_timeout = 0;
+ 	uint32_t server_addr = server_addr; /* for compiler */
+ 	uint32_t requested_ip = 0;
+ 	uint32_t xid = xid; /* for compiler */
+@@ -1260,9 +1263,9 @@ int udhcpc_main(int argc UNUSED_PARAM, c
+ 
+ 	/* Parse command line */
+ 	/* O,x: list; -T,-t,-A take numeric param */
+-	opt_complementary = "O::x::T+:t+:A+" IF_UDHCP_VERBOSE(":vv") ;
++	opt_complementary = "O::x::T+:l+:t+:A+" IF_UDHCP_VERBOSE(":vv") ;
+ 	IF_LONG_OPTS(applet_long_options = udhcpc_longopts;)
+-	opt = getopt32(argv, "CV:H:h:F:i:np:qRr:s:T:t:SA:O:ox:fB"
++	opt = getopt32(argv, "CV:H:h:F:i:np:qRr:s:T:l:t:SA:O:ox:fB"
+ 		USE_FOR_MMU("b")
+ 		IF_FEATURE_UDHCPC_ARPING("a")
+ 		IF_FEATURE_UDHCP_PORT("P:")
+@@ -1270,7 +1273,7 @@ int udhcpc_main(int argc UNUSED_PARAM, c
+ 		, &str_V, &str_h, &str_h, &str_F
+ 		, &client_config.interface, &client_config.pidfile, &str_r /* i,p */
+ 		, &client_config.script /* s */
+-		, &discover_timeout, &discover_retries, &tryagain_timeout /* T,t,A */
++		, &discover_timeout, &lease_timeout, &discover_retries, &tryagain_timeout /* T,l,t,A */
+ 		, &list_O
+ 		, &list_x
+ 		IF_FEATURE_UDHCP_PORT(, &str_P)
+@@ -1695,19 +1698,25 @@ int udhcpc_main(int argc UNUSED_PARAM, c
+ 				uint32_t lease_seconds;
+ 				struct in_addr temp_addr;
+ 
+-				temp = udhcp_get_option(&packet, DHCP_LEASE_TIME);
+-				if (!temp) {
+-					bb_error_msg("no lease time with ACK, using 1 hour lease");
+-					lease_seconds = 60 * 60;
+-				} else {
+-					/* it IS unaligned sometimes, don't "optimize" */
+-					move_from_unaligned32(lease_seconds, temp);
+-					lease_seconds = ntohl(lease_seconds);
+-					/* paranoia: must not be too small and not prone to overflows */
+-					if (lease_seconds < 0x10)
+-						lease_seconds = 0x10;
+-					if (lease_seconds >= 0x10000000)
+-						lease_seconds = 0x0fffffff;
++			        if (lease_timeout > 0) {
++			                lease_seconds = lease_timeout;
++			                bb_info_msg("using user specified lease timeout: %u",
++                                                    (unsigned)lease_timeout);
++                                } else {
++					temp = udhcp_get_option(&packet, DHCP_LEASE_TIME);
++					if (!temp) {
++						bb_error_msg("no lease time with ACK, using 1 hour lease");
++						lease_seconds = 60 * 60;
++					} else {
++						/* it IS unaligned sometimes, don't "optimize" */
++						move_from_unaligned32(lease_seconds, temp);
++						lease_seconds = ntohl(lease_seconds);
++						/* paranoia: must not be too small and not prone to overflows */
++						if (lease_seconds < 0x10)
++							lease_seconds = 0x10;
++						if (lease_seconds >= 0x10000000)
++							lease_seconds = 0x0fffffff;
++					}
+ 				}
+ #if ENABLE_FEATURE_UDHCPC_ARPING
+ 				if (opt & OPT_a) {

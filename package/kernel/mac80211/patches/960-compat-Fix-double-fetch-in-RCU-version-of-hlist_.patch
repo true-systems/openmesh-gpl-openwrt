@@ -1,0 +1,16 @@
+Forwarded: http://marc.info/?l=linux-backports&m=141505472425236
+Applied-Upstream: https://git.kernel.org/cgit/linux/kernel/git/backports/backports.git/commit/?id=3a1429a6e59f0e61720bb523e3b93d015a9fa63a
+
+--- a/backport-include/linux/list.h
++++ b/backport-include/linux/list.h
+@@ -17,7 +17,9 @@
+ 
+ #undef hlist_entry_safe
+ #define hlist_entry_safe(ptr, type, member) \
+-	(ptr) ? hlist_entry(ptr, type, member) : NULL
++	({ typeof(ptr) ____ptr = (ptr); \
++	   ____ptr ? hlist_entry(____ptr, type, member) : NULL; \
++	})
+ 
+ #define hlist_for_each_entry4(tpos, pos, head, member)			\
+ 	for (pos = (head)->first;					\

@@ -1,0 +1,31 @@
+diff -urw compat-wireless-2014-11-04.orig/include/uapi/linux/nl80211.h compat-wireless-2014-11-04/include/uapi/linux/nl80211.h
+--- compat-wireless-2014-11-04.orig/include/uapi/linux/nl80211.h	2015-11-13 19:34:37.266023469 +0800
++++ compat-wireless-2014-11-04/include/uapi/linux/nl80211.h	2015-11-13 20:21:37.691953702 +0800
+@@ -4153,11 +4153,13 @@
+  *	dangerous because will destroy stations performance as a lot of frames
+  *	will be lost while scanning off-channel, therefore it must be used only
+  *	when really needed
++ * @NL80211_SCAN_FLAG_PASSIVE_RADAR: force passive scan on DFS channels
+  */
+ enum nl80211_scan_flags {
+ 	NL80211_SCAN_FLAG_LOW_PRIORITY			= 1<<0,
+ 	NL80211_SCAN_FLAG_FLUSH				= 1<<1,
+ 	NL80211_SCAN_FLAG_AP				= 1<<2,
++	NL80211_SCAN_FLAG_PASSIVE_RADAR			= 1<<4,
+ };
+ 
+ /**
+diff -urw compat-wireless-2014-11-04.orig/net/mac80211/scan.c compat-wireless-2014-11-04/net/mac80211/scan.c
+--- compat-wireless-2014-11-04.orig/net/mac80211/scan.c	2015-11-13 19:34:37.269023469 +0800
++++ compat-wireless-2014-11-04/net/mac80211/scan.c	2015-11-13 20:20:36.373955219 +0800
+@@ -728,7 +728,9 @@
+ 	 * In any case, it is not necessary for a passive scan.
+ 	 */
+ 	if (chan->flags & IEEE80211_CHAN_NO_IR ||
+-	    !local->scan_req->n_ssids) {
++	    !local->scan_req->n_ssids ||
++	    ((chan->flags & IEEE80211_CHAN_RADAR) &&
++	     (local->scan_req->flags & NL80211_SCAN_FLAG_PASSIVE_RADAR))) {
+ 		*next_delay = IEEE80211_PASSIVE_CHANNEL_TIME;
+ 		local->next_scan_state = SCAN_DECISION;
+ 		return;

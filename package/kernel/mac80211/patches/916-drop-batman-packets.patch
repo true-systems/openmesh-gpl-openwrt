@@ -1,0 +1,16 @@
+Forwarded: not-needed
+ Breaks functions (batman-adv over AP) and thus cannot be forwarded.
+
+--- a/net/mac80211/tx.c
++++ b/net/mac80211/tx.c
+@@ -1821,6 +1821,10 @@ netdev_tx_t ieee80211_subif_start_xmit(s
+ 			break;
+ 		/* fall through */
+ 	case NL80211_IFTYPE_AP:
++                if (ethertype == htons(0x4305)) {
++                        /* don't send batman-adv frames over AP vif */
++                        goto fail_rcu;
++	        }
+ 		if (sdata->vif.type == NL80211_IFTYPE_AP)
+ 			chanctx_conf = rcu_dereference(sdata->vif.chanctx_conf);
+ 		if (!chanctx_conf)

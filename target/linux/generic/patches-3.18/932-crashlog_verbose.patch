@@ -1,0 +1,25 @@
+Forwarded: not-needed
+ Only for internal debugging purposes
+
+--- a/kernel/crashlog.c
++++ b/kernel/crashlog.c
+@@ -180,7 +180,7 @@ int __init crashlog_init_fs(void)
+ 	crashlog_buf->magic = CRASHLOG_MAGIC;
+ 	crashlog_buf->len = 0;
+ 
+-	dump.max_reason = KMSG_DUMP_OOPS;
++	dump.max_reason = KMSG_DUMP_POWEROFF;
+ 	dump.dump = crashlog_do_dump;
+ 	kmsg_dump_register(&dump);
+ 
+--- a/kernel/printk/printk.c
++++ b/kernel/printk/printk.c
+@@ -2738,7 +2738,7 @@ int kmsg_dump_unregister(struct kmsg_dum
+ }
+ EXPORT_SYMBOL_GPL(kmsg_dump_unregister);
+ 
+-static bool always_kmsg_dump;
++static bool always_kmsg_dump = 1;
+ module_param_named(always_kmsg_dump, always_kmsg_dump, bool, S_IRUGO | S_IWUSR);
+ 
+ /**

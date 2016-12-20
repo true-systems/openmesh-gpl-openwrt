@@ -1,0 +1,19 @@
+Forwarded: not-needed
+ Only for internal debugging purposes
+
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -859,6 +859,13 @@ static int prepare_signal(int sig, struc
+ {
+ 	struct signal_struct *signal = p->signal;
+ 	struct task_struct *t;
++	char tmpname[TASK_COMM_LEN];
++
++	if (p->pid == 1 &&
++	    (sig == SIGUSR1 || sig == SIGUSR2 || sig == SIGTERM)) {
++		get_task_comm(tmpname, current);
++		printk("Generate signal %d to init (1) by %s (%d)\n", sig, tmpname, current->pid);
++	}
+ 
+ 	if (unlikely(signal->flags & SIGNAL_GROUP_EXIT)) {
+ 		/*

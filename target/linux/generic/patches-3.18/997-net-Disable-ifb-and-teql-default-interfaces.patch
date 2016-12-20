@@ -1,0 +1,39 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Wed, 22 Jul 2015 16:10:09 +0200
+Subject: [PATCH] net: Disable ifb and teql default interfaces
+
+Forwarded: not-needed
+ Special requirement from Open Mesh. It is just the "convenient" way to
+ modify it directly in the kernel intead of letting the firmware-ng tools
+ handle it
+---
+ drivers/net/ifb.c    | 2 +-
+ net/sched/sch_teql.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/ifb.c b/drivers/net/ifb.c
+index 94570aa..52cc9da 100644
+--- a/drivers/net/ifb.c
++++ b/drivers/net/ifb.c
+@@ -53,7 +53,7 @@ struct ifb_private {
+ 	u64 tx_bytes;
+ };
+ 
+-static int numifbs = 2;
++static int numifbs = 0;
+ 
+ static void ri_tasklet(unsigned long dev);
+ static netdev_tx_t ifb_xmit(struct sk_buff *skb, struct net_device *dev);
+diff --git a/net/sched/sch_teql.c b/net/sched/sch_teql.c
+index e026871..6badbc9 100644
+--- a/net/sched/sch_teql.c
++++ b/net/sched/sch_teql.c
+@@ -467,7 +467,7 @@ static __init void teql_master_setup(struct net_device *dev)
+ }
+ 
+ static LIST_HEAD(master_dev_list);
+-static int max_equalizers = 1;
++static int max_equalizers = 0;
+ module_param(max_equalizers, int, 0);
+ MODULE_PARM_DESC(max_equalizers, "Max number of link equalizers");
+ 

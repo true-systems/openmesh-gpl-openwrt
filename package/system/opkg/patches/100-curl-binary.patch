@@ -1,0 +1,34 @@
+Forwarded: no
+
+diff --git a/libopkg/opkg_download.c b/libopkg/opkg_download.c
+index 4a8b2a2..ac54deb 100644
+--- a/libopkg/opkg_download.c
++++ b/libopkg/opkg_download.c
+@@ -157,18 +157,18 @@ opkg_download(const char *src, const char *dest_file_name,
+ #else
+     {
+       int res;
+-      const char *argv[8];
++      const char *argv[10];
+       int i = 0;
+ 
+-      argv[i++] = "wget";
+-      argv[i++] = "-q";
+-      if (conf->http_proxy || conf->ftp_proxy) {
+-	argv[i++] = "-Y";
+-	argv[i++] = "on";
+-      }
+-      argv[i++] = "-O";
+-      argv[i++] = tmp_file_location;
++      argv[i++] = "curl";
++      argv[i++] = "--silent";
++      argv[i++] = "--location";
++      argv[i++] = "--globoff";
++      argv[i++] = "--insecure";
++      argv[i++] = "--url";
+       argv[i++] = src;
++      argv[i++] = "--output";
++      argv[i++] = tmp_file_location;
+       argv[i++] = NULL;
+       res = xsystem(argv);
+ 

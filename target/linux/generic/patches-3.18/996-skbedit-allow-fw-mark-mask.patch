@@ -1,0 +1,97 @@
+Forwarded: no
+ David rejected it because the submitted patch was broken.
+ http://www.spinics.net/lists/netdev/msg290711.html Has to be resubmitted.
+
+--- a/include/net/tc_act/tc_skbedit.h
++++ b/include/net/tc_act/tc_skbedit.h
+@@ -26,6 +26,7 @@ struct tcf_skbedit {
+ 	u32			flags;
+ 	u32     		priority;
+ 	u32     		mark;
++	u32			mask;
+ 	u16			queue_mapping;
+ 	/* XXX: 16-bit pad here? */
+ };
+--- a/include/uapi/linux/tc_act/tc_skbedit.h
++++ b/include/uapi/linux/tc_act/tc_skbedit.h
+@@ -27,6 +27,7 @@
+ #define SKBEDIT_F_PRIORITY		0x1
+ #define SKBEDIT_F_QUEUE_MAPPING		0x2
+ #define SKBEDIT_F_MARK			0x4
++#define SKBEDIT_F_MASK			0x8
+ 
+ struct tc_skbedit {
+ 	tc_gen;
+@@ -39,6 +40,7 @@ enum {
+ 	TCA_SKBEDIT_PRIORITY,
+ 	TCA_SKBEDIT_QUEUE_MAPPING,
+ 	TCA_SKBEDIT_MARK,
++	TCA_SKBEDIT_MASK,
+ 	__TCA_SKBEDIT_MAX
+ };
+ #define TCA_SKBEDIT_MAX (__TCA_SKBEDIT_MAX - 1)
+--- a/net/sched/act_skbedit.c
++++ b/net/sched/act_skbedit.c
+@@ -43,8 +43,10 @@ static int tcf_skbedit(struct sk_buff *s
+ 	if (d->flags & SKBEDIT_F_QUEUE_MAPPING &&
+ 	    skb->dev->real_num_tx_queues > d->queue_mapping)
+ 		skb_set_queue_mapping(skb, d->queue_mapping);
+-	if (d->flags & SKBEDIT_F_MARK)
+-		skb->mark = d->mark;
++	if (d->flags & SKBEDIT_F_MARK) {
++		skb->mark &= ~d->mask;
++		skb->mark |= d->mark & d->mask;
++	}
+ 
+ 	spin_unlock(&d->tcf_lock);
+ 	return d->tcf_action;
+@@ -55,6 +57,7 @@ static const struct nla_policy skbedit_p
+ 	[TCA_SKBEDIT_PRIORITY]		= { .len = sizeof(u32) },
+ 	[TCA_SKBEDIT_QUEUE_MAPPING]	= { .len = sizeof(u16) },
+ 	[TCA_SKBEDIT_MARK]		= { .len = sizeof(u32) },
++	[TCA_SKBEDIT_MASK]		= { .len = sizeof(u32) },
+ };
+ 
+ static int tcf_skbedit_init(struct net *net, struct nlattr *nla,
+@@ -64,7 +67,7 @@ static int tcf_skbedit_init(struct net *
+ 	struct nlattr *tb[TCA_SKBEDIT_MAX + 1];
+ 	struct tc_skbedit *parm;
+ 	struct tcf_skbedit *d;
+-	u32 flags = 0, *priority = NULL, *mark = NULL;
++	u32 flags = 0, *priority = NULL, *mark = NULL, *mask = NULL;
+ 	u16 *queue_mapping = NULL;
+ 	int ret = 0, err;
+ 
+@@ -93,6 +96,11 @@ static int tcf_skbedit_init(struct net *
+ 		mark = nla_data(tb[TCA_SKBEDIT_MARK]);
+ 	}
+ 
++	if (tb[TCA_SKBEDIT_MASK] != NULL) {
++		flags |= SKBEDIT_F_MASK;
++		mask = nla_data(tb[TCA_SKBEDIT_MASK]);
++	}
++
+ 	if (!flags)
+ 		return -EINVAL;
+ 
+@@ -123,6 +131,10 @@ static int tcf_skbedit_init(struct net *
+ 		d->queue_mapping = *queue_mapping;
+ 	if (flags & SKBEDIT_F_MARK)
+ 		d->mark = *mark;
++	/* default behaviour is to use all the bits */
++	d->mask = 0xffffffff;
++	if (flags & SKBEDIT_F_MASK)
++		d->mask = *mask;
+ 
+ 	d->tcf_action = parm->action;
+ 
+@@ -160,6 +172,9 @@ static int tcf_skbedit_dump(struct sk_bu
+ 	    nla_put(skb, TCA_SKBEDIT_MARK, sizeof(d->mark),
+ 		    &d->mark))
+ 		goto nla_put_failure;
++	if ((d->flags & SKBEDIT_F_MASK) &&
++	    nla_put_u32(skb, TCA_SKBEDIT_MASK, d->mask))
++		goto nla_put_failure;
+ 	t.install = jiffies_to_clock_t(jiffies - d->tcf_tm.install);
+ 	t.lastuse = jiffies_to_clock_t(jiffies - d->tcf_tm.lastuse);
+ 	t.expires = jiffies_to_clock_t(d->tcf_tm.expires);

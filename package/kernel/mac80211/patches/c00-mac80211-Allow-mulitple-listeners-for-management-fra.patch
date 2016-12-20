@@ -1,0 +1,92 @@
+From eb01149a3fc2df983faf0315899f6ad154f22a11 Mon Sep 17 00:00:00 2001
+From: Benjamin Berg <benjamin@sipsolutions.net>
+Date: Sun, 11 Oct 2015 19:07:28 +0200
+Subject: [PATCH] mac80211: Allow mulitple listeners for management frames.
+
+Previously it was not possible to have multiple listeners for management
+frames in userspace. This is a bit weird as multiple processes in
+userspace might try to request management frame reporting but only
+the first request was accepted.
+
+Signed-off-by: Benjamin Berg <benjamin@sipsolutions.net>
+
+Forwarded: no
+
+---
+ net/wireless/mlme.c | 34 ++++++++++++++++++++++++++++++++--
+ 1 file changed, 32 insertions(+), 2 deletions(-)
+
+diff --git a/net/wireless/mlme.c b/net/wireless/mlme.c
+index 9b18d93..b0832ae 100644
+--- a/net/wireless/mlme.c
++++ b/net/wireless/mlme.c
+@@ -405,6 +405,7 @@ int cfg80211_mlme_register_mgmt(struct wireless_dev *wdev, u32 snd_portid,
+ 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
+ 	struct cfg80211_mgmt_registration *reg, *nreg;
+ 	int err = 0;
++	int registered = 0;
+ 	u16 mgmt_type;
+ 
+ 	if (!wdev->wiphy->mgmt_stypes)
+@@ -432,6 +433,12 @@ int cfg80211_mlme_register_mgmt(struct wireless_dev *wdev, u32 snd_portid,
+ 		if (frame_type != le16_to_cpu(reg->frame_type))
+ 			continue;
+ 
++		registered = 1;
++
++		/* Allow duplicate registrations on different ports */
++		if (snd_portid != reg->nlportid)
++			continue;
++
+ 		if (memcmp(reg->match, match_data, mlen) == 0) {
+ 			err = -EALREADY;
+ 			break;
+@@ -449,7 +456,7 @@ int cfg80211_mlme_register_mgmt(struct wireless_dev *wdev, u32 snd_portid,
+ 	nreg->frame_type = cpu_to_le16(frame_type);
+ 	list_add(&nreg->list, &wdev->mgmt_registrations);
+ 
+-	if (rdev->ops->mgmt_frame_register)
++	if (rdev->ops->mgmt_frame_register && !registered)
+ 		rdev_mgmt_frame_register(rdev, wdev, frame_type, true);
+ 
+  out:
+@@ -467,9 +474,28 @@ void cfg80211_mlme_unregister_socket(struct wireless_dev *wdev, u32 nlportid)
+ 	spin_lock_bh(&wdev->mgmt_registrations_lock);
+ 
+ 	list_for_each_entry_safe(reg, tmp, &wdev->mgmt_registrations, list) {
++		struct cfg80211_mgmt_registration *inner;
++		int keep_registration = 0;
++
+ 		if (reg->nlportid != nlportid)
+ 			continue;
+ 
++		/* Do not remove registration as long as there is one other
++		 * registration for the frame type. Note that this registration
++		 * might even be on the same nlportid with a different match. */
++		list_for_each_entry(inner, &wdev->mgmt_registrations, list) {
++			if (inner == reg)
++				continue;
++
++			if (reg->frame_type == inner->frame_type) {
++				keep_registration = 1;
++				break;
++			}
++		}
++
++		if (keep_registration)
++			continue;
++
+ 		if (rdev->ops->mgmt_frame_register) {
+ 			u16 frame_type = le16_to_cpu(reg->frame_type);
+ 
+@@ -652,7 +675,6 @@ bool cfg80211_rx_mgmt(struct wireless_dev *wdev, int freq, int sig_mbm,
+ 			continue;
+ 
+ 		result = true;
+-		break;
+ 	}
+ 
+ 	spin_unlock_bh(&wdev->mgmt_registrations_lock);
+-- 
+2.6.0
+

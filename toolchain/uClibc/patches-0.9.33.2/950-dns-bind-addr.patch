@@ -1,0 +1,133 @@
+Forwarded: no
+
+diff --git a/include/resolv.h b/include/resolv.h
+index 9349be1..4138675 100644
+--- a/include/resolv.h
++++ b/include/resolv.h
+@@ -327,6 +327,8 @@ int		res_search (const char *, int, int, u_char *, int) __THROW;
+ #if 0
+ int		res_send (const u_char *, int, u_char *, int) __THROW;
+ #endif
++void     	res_set_nameserver(const u_char *) __THROW;
++libc_hidden_proto(res_set_nameserver)
+ __END_DECLS
+ 
+ #if 0
+--- /dev/null	2012-09-21 14:54:40.529571642 +0800
++++ b/libc/inet/res_set_nameserver.c	2012-09-30 04:10:06.000000000 +0800
+@@ -0,0 +1,8 @@
++/*
++ * Copyright (C) 2000-2006 Erik Andersen <andersen@uclibc.org>
++ *
++ * Licensed under the LGPL v2.1, see the file COPYING.LIB in this tarball.
++ */
++
++#define L_res_set_nameserver
++#include RESOLVER
+diff --git a/libc/inet/Makefile.in b/libc/inet/Makefile.in
+index a4d3c49..d889f4e 100644
+--- a/libc/inet/Makefile.in
++++ b/libc/inet/Makefile.in
+@@ -40,7 +40,7 @@ CSRC-$(findstring y,$(UCLIBC_HAS_IPV4)$(UCLIBC_HAS_IPV6)) += \
+ CSRC-$(findstring y,$(UCLIBC_HAS_RESOLVER_SUPPORT)) += \
+ 	ns_netint.c ns_parse.c res_data.c \
+ 	res_init.c res_query.c res_comp.c ns_name.c \
+-	_res_state.c
++	res_set_nameserver.c _res_state.c
+ ## # unused ATM
+ ## CSRC-y += encodep.c decodep.c formquery.c
+ 
+diff --git a/libc/inet/getaddrinfo.c b/libc/inet/getaddrinfo.c
+index 88bd745..fc32746 100644
+--- a/libc/inet/getaddrinfo.c
++++ b/libc/inet/getaddrinfo.c
+@@ -80,6 +80,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #define UNIX_PATH_MAX  108
+ #endif
+ 
++struct sockaddr *dns_bind_sin = NULL;
++
+ /* Useful for having small structure members/global variables */
+ typedef int8_t socktype_t;
+ typedef int8_t family_t;
+@@ -410,6 +412,7 @@ gaih_inet(const char *name, const struct gaih_service *service,
+ 	}
+ 
+ 	memset(&nullserv, 0, sizeof(nullserv));
++	dns_bind_sin = req->ai_addr;
+ 
+ 	tp = gaih_inet_typeproto;
+ 	if (req->ai_protocol || req->ai_socktype) {
+diff --git a/libc/inet/resolv.c b/libc/inet/resolv.c
+index 225018e..d54924b 100644
+--- a/libc/inet/resolv.c
++++ b/libc/inet/resolv.c
+@@ -1213,6 +1213,8 @@ static int __decode_answer(const unsigned char *message, /* packet */
+ 	return i + RRFIXEDSZ + a->rdlength;
+ }
+ 
++extern struct sockaddr *dns_bind_sin;
++
+ /* On entry:
+  *  a.buf(len) = auxiliary buffer for IP addresses after first one
+  *  a.add_count = how many additional addresses are there already
+@@ -1372,6 +1374,14 @@ int attribute_hidden __dns_lookup(const char *name,
+ 		fd = socket(sa.sa.sa_family, SOCK_DGRAM, IPPROTO_UDP);
+ 		if (fd < 0) /* paranoia */
+ 			goto try_next_server;
++#ifdef __UCLIBC_HAS_IPV4__
++                if ((sa.sa.sa_family == AF_INET) && (dns_bind_sin)) {
++                        rc = bind(fd, dns_bind_sin, sizeof(struct sockaddr_in));
++                        if (rc < 0)
++                                printf("__dns_lookup: binding to IP '%s' failed: %s\n",
++                                       inet_ntoa(((struct sockaddr_in *)dns_bind_sin)->sin_addr), strerror(errno));
++                }
++#endif
+ 		rc = connect(fd, &sa.sa, sizeof(sa));
+ 		if (rc < 0) {
+ 			/*if (errno == ENETUNREACH) { */
+@@ -1575,6 +1585,44 @@ int attribute_hidden __dns_lookup(const char *name,
+ }
+ #endif /* L_dnslookup */
+ 
++#ifdef L_res_set_nameserver
++void res_set_nameserver(const u_char *nameserver)
++{
++	sockaddr46_t sa;
++
++	memset(&sa, 0, sizeof(sa));
++
++	if (0) /* nothing */;
++#ifdef __UCLIBC_HAS_IPV6__
++	else if (inet_pton(AF_INET6, nameserver, &sa.sa6.sin6_addr) > 0) {
++		sa.sa6.sin6_family = AF_INET6;
++		sa.sa6.sin6_port = htons(NAMESERVER_PORT);
++	}
++#endif
++#ifdef __UCLIBC_HAS_IPV4__
++	else if (inet_pton(AF_INET, nameserver, &sa.sa4.sin_addr) > 0) {
++		sa.sa4.sin_family = AF_INET;
++		sa.sa4.sin_port = htons(NAMESERVER_PORT);
++	}
++#endif
++	else
++		return; /* garbage */
++
++	__UCLIBC_MUTEX_LOCK(__resolv_lock);
++	__close_nameservers();
++	__res_sync = NULL;
++
++	__nameserver = malloc(sizeof(__nameserver[0]));
++	if (!__nameserver)
++		return;
++
++	__nameserver[0] = sa; /* struct copy */
++	__nameservers = 1;
++	__UCLIBC_MUTEX_UNLOCK(__resolv_lock);
++}
++libc_hidden_def(res_set_nameserver)
++#endif /* L_res_set_nameserver */
++
+ 
+ #ifdef L_read_etc_hosts_r
+ 

@@ -1,0 +1,47 @@
+Forwarded: no
+
+--- a/net/mac80211/cfg.c
++++ b/net/mac80211/cfg.c
+@@ -15,6 +15,7 @@
+ #include <linux/rcupdate.h>
+ #include <linux/if_ether.h>
+ #include <net/cfg80211.h>
++#include <linux/export.h>
+ #include "ieee80211_i.h"
+ #include "driver-ops.h"
+ #include "cfg.h"
+@@ -22,6 +23,34 @@
+ #include "mesh.h"
+ #include "wme.h"
+ 
++int mac80211_get_rssi(struct net_device *net_dev, char *mac_addr, int *rssi)
++{
++	struct ieee80211_sub_if_data *sdata;
++	struct sta_info *sta;
++	int res = -1;
++
++	if (!net_dev)
++		goto out;
++
++	if (!net_dev->ieee80211_ptr)
++		goto out;
++
++	sdata = IEEE80211_DEV_TO_SUB_IF(net_dev);
++
++	rcu_read_lock();
++	sta = sta_info_get_bss(sdata, mac_addr);
++
++	if (sta) {
++		*rssi = (s8) -ewma_read(&sta->avg_signal);
++		res = 0;
++	}
++	rcu_read_unlock();
++
++out:
++	return res;
++}
++EXPORT_SYMBOL_GPL(mac80211_get_rssi);
++
+ static struct wireless_dev *ieee80211_add_iface(struct wiphy *wiphy,
+ 						const char *name,
+ 						enum nl80211_iftype type,

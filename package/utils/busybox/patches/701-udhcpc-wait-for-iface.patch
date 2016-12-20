@@ -1,0 +1,64 @@
+Forwarded: no
+
+--- a/networking/udhcp/dhcpc.c
++++ b/networking/udhcp/dhcpc.c
+@@ -1307,6 +1307,10 @@ int udhcpc_main(int argc UNUSED_PARAM, c
+ 		SERVER_PORT = CLIENT_PORT - 1;
+ 	}
+ #endif
++	if (opt & OPT_S) {
++		openlog(applet_name, LOG_PID, LOG_DAEMON);
++		logmode |= LOGMODE_SYSLOG;
++	}
+ 	while (list_O) {
+ 		char *optstr = llist_pop(&list_O);
+ 		unsigned n = bb_strtou(optstr, NULL, 0);
+@@ -1339,9 +1343,20 @@ int udhcpc_main(int argc UNUSED_PARAM, c
+ 			NULL,
+ 			client_config.client_mac)
+ 	) {
++	        bb_info_msg("%s interface '%s' not available - waiting", applet_name, client_config.interface);
++	        
++	        for (timeout = 0; timeout < 5; timeout++) {
++	                sleep(2);
++	                
++	                if (!udhcp_read_interface(client_config.interface, &client_config.ifindex, NULL, client_config.client_mac))
++	                        goto iface_found;
++                }
++
++                bb_info_msg("%s interface '%s' not available - giving up", applet_name, client_config.interface);
+ 		return 1;
+ 	}
+ 
++iface_found:
+ 	clientid_mac_ptr = NULL;
+ 	if (!(opt & OPT_C) && !udhcp_find_option(client_config.options, DHCP_CLIENT_ID)) {
+ 		/* not suppressed and not set, set the default client ID */
+@@ -1367,10 +1382,6 @@ int udhcpc_main(int argc UNUSED_PARAM, c
+ 		logmode = LOGMODE_NONE;
+ 	}
+ #endif
+-	if (opt & OPT_S) {
+-		openlog(applet_name, LOG_PID, LOG_DAEMON);
+-		logmode |= LOGMODE_SYSLOG;
+-	}
+ 
+ 	/* Make sure fd 0,1,2 are open */
+ 	bb_sanitize_stdio();
+@@ -1379,7 +1390,7 @@ int udhcpc_main(int argc UNUSED_PARAM, c
+ 	/* Create pidfile */
+ 	write_pidfile(client_config.pidfile);
+ 	/* Goes to stdout (unless NOMMU) and possibly syslog */
+-	bb_info_msg("%s (v"BB_VER") started", applet_name);
++	bb_info_msg("%s (v"BB_VER") started (%s)", applet_name, client_config.interface);
+ 	/* Set up the signal pipe */
+ 	udhcp_sp_setup();
+ 	/* We want random_xid to be random... */
+@@ -1433,6 +1444,7 @@ int udhcpc_main(int argc UNUSED_PARAM, c
+ 					already_waited_sec += (unsigned)monotonic_sec() - timestamp_before_wait;
+ 					continue;
+ 				}
++				bb_info_msg("died in select: %s", client_config.interface);
+ 				/* Else: an error occured, panic! */
+ 				bb_perror_msg_and_die("select");
+ 			}

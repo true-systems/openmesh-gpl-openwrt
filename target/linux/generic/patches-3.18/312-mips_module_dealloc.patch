@@ -1,0 +1,29 @@
+From: Sven Eckelmann <sven@open-mesh.com>
+Date: Tue, 20 Jan 2015 09:07:04 +1030
+Subject: [PATCH] mips: Fix memory leak when insmod fails
+
+Forwarded: https://patchwork.ozlabs.org/patch/488475/
+Applied-Upstream: https://dev.openwrt.org/changeset/46247
+
+--- a/arch/mips/kernel/module.c
++++ b/arch/mips/kernel/module.c
+@@ -540,7 +540,7 @@ int module_finalize(const Elf_Ehdr *hdr,
+ 	return 0;
+ }
+ 
+-void module_arch_cleanup(struct module *mod)
++void module_arch_freeing_init(struct module *mod)
+ {
+ 	if (mod->arch.phys_plt_tbl) {
+ 		__module_free(mod->arch.phys_plt_tbl);
+@@ -550,7 +550,10 @@ void module_arch_cleanup(struct module *
+ 		__module_free(mod->arch.virt_plt_tbl);
+ 		mod->arch.virt_plt_tbl = NULL;
+ 	}
++}
+ 
++void module_arch_cleanup(struct module *mod)
++{
+ 	spin_lock_irq(&dbe_lock);
+ 	list_del(&mod->arch.dbe_list);
+ 	spin_unlock_irq(&dbe_lock);

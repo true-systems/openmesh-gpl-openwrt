@@ -1,0 +1,30 @@
+--- a/drivers/net/phy/phy_device.c
++++ b/drivers/net/phy/phy_device.c
+@@ -916,6 +916,8 @@ static int gen10g_config_aneg(struct phy
+ int genphy_update_link(struct phy_device *phydev)
+ {
+ 	int status;
++	u32 loopback;
++	u32 bmcr;
+ 
+ 	if (phydev->drv->update_link)
+ 		return phydev->drv->update_link(phydev);
+@@ -924,13 +926,17 @@ int genphy_update_link(struct phy_device
+ 	status = phy_read(phydev, MII_BMSR);
+ 	if (status < 0)
+ 		return status;
++	/* HACK: check for loopback mode */
++	bmcr = phy_read(phydev, MII_BMCR);
++	bmcr = phy_read(phydev, MII_BMCR);
++	loopback = bmcr & BMCR_LOOPBACK;
+ 
+ 	/* Read link and autonegotiation status */
+ 	status = phy_read(phydev, MII_BMSR);
+ 	if (status < 0)
+ 		return status;
+ 
+-	if ((status & BMSR_LSTATUS) == 0)
++	if ((status & BMSR_LSTATUS) == 0 && !loopback)
+ 		phydev->link = 0;
+ 	else
+ 		phydev->link = 1;

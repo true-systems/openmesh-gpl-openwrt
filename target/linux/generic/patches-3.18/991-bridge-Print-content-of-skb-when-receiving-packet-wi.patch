@@ -1,0 +1,161 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Fri, 30 Oct 2015 11:36:46 +0100
+Subject: [PATCH] bridge: Print content of skb when receiving packet with own address
+
+The *not ratelimited* output can be enabled via
+
+    sysctl -w net.bridge.br-debug-own-address=1
+
+Forwarded: not-needed
+ This is only for debugging purposes and has unclean parts in it
+---
+ net/bridge/br_fdb.c       |  8 +++---
+ net/bridge/br_input.c     | 70 +++++++++++++++++++++++++++++++++++++++++++++--
+ net/bridge/br_netfilter.c | 10 +++++++
+ 3 files changed, 82 insertions(+), 6 deletions(-)
+
+--- a/net/bridge/br_fdb.c
++++ b/net/bridge/br_fdb.c
+@@ -35,7 +35,7 @@ static int fdb_insert(struct net_bridge
+ static void fdb_notify(struct net_bridge *br,
+ 		       const struct net_bridge_fdb_entry *, int);
+ 
+-static u32 fdb_salt __read_mostly;
++u32 fdb_salt __read_mostly;
+ 
+ int __init br_fdb_init(void)
+ {
+@@ -452,9 +452,9 @@ static struct net_bridge_fdb_entry *fdb_
+ 	return NULL;
+ }
+ 
+-static struct net_bridge_fdb_entry *fdb_find_rcu(struct hlist_head *head,
+-						 const unsigned char *addr,
+-						 __u16 vid)
++struct net_bridge_fdb_entry *fdb_find_rcu(struct hlist_head *head,
++					  const unsigned char *addr,
++					  __u16 vid)
+ {
+ 	struct net_bridge_fdb_entry *fdb;
+ 
+--- a/net/bridge/br_input.c
++++ b/net/bridge/br_input.c
+@@ -57,6 +57,66 @@ static int br_pass_frame_up(struct sk_bu
+ 		       netif_receive_skb);
+ }
+ 
++int br_debug_own_address __read_mostly = 0;
++
++/* WARNING keep in sync with br_fdb.c */
++extern u32 fdb_salt __read_mostly;
++static inline int br_mac_hash(const unsigned char *mac, __u16 vid)
++{
++	/* use 1 byte of OUI and 3 bytes of NIC */
++	u32 key = get_unaligned((u32 *)(mac + 2));
++	return jhash_2words(key, vid, fdb_salt) & (BR_HASH_SIZE - 1);
++}
++struct net_bridge_fdb_entry *fdb_find_rcu(struct hlist_head *head,
++					  const unsigned char *addr,
++					  __u16 vid);
++
++static void br_debug_check_own_address(struct net_bridge *br,
++				       struct net_bridge_port *source,
++				       const unsigned char *addr, u16 vid,
++				       const struct sk_buff *skb)
++{
++	struct hlist_head *head = &br->hash[br_mac_hash(addr, vid)];
++	struct net_bridge_fdb_entry *fdb;
++	char buf[256];
++	char *data;
++	size_t data_len;
++	int offset;
++
++	if (!br_debug_own_address)
++		return;
++
++	/* ignore packets unless we are using this port */
++	if (!(source->state == BR_STATE_LEARNING ||
++	      source->state == BR_STATE_FORWARDING))
++		return;
++
++	fdb = fdb_find_rcu(head, addr, vid);
++	if (unlikely(!fdb))
++		return;
++
++	/* attempt to update an entry not for a local interface */
++	if (likely(!fdb->is_local))
++		return;
++
++	/* find the real start and length (beginning with ethernet header */
++	data_len = skb->len;
++	offset = ((uintptr_t)eth_hdr(skb)) - ((uintptr_t)skb->data);
++	data_len -= offset;
++	data_len = min_t(size_t, data_len, sizeof(buf));
++
++	data = skb_header_pointer(skb, offset, data_len, buf);
++	if (!data)
++		return;
++
++	br_warn(br,
++		"DEBUG: received packet on %s with own address as source address\n",
++		source->dev->name);
++
++	print_hex_dump(KERN_ERR, "Data", DUMP_PREFIX_OFFSET, 16, 1,
++		       data, data_len, true);
++}
++
+ /* note: already called with rcu_read_lock */
+ int br_handle_frame_finish(struct sk_buff *skb)
+ {
+@@ -77,8 +137,11 @@ int br_handle_frame_finish(struct sk_buf
+ 
+ 	/* insert into forwarding database after filtering to avoid spoofing */
+ 	br = p->br;
+-	if (p->flags & BR_LEARNING)
++	if (p->flags & BR_LEARNING) {
+ 		br_fdb_update(br, p, eth_hdr(skb)->h_source, vid, false);
++		br_debug_check_own_address(br, p, eth_hdr(skb)->h_source, vid,
++					   skb);
++	}
+ 
+ 	if (!is_broadcast_ether_addr(dest) && is_multicast_ether_addr(dest) &&
+ 	    br_multicast_rcv(br, p, skb, vid))
+@@ -153,8 +216,11 @@ static int br_handle_local_finish(struct
+ 	u16 vid = 0;
+ 
+ 	/* check if vlan is allowed, to avoid spoofing */
+-	if (p->flags & BR_LEARNING && br_should_learn(p, skb, &vid))
++	if (p->flags & BR_LEARNING && br_should_learn(p, skb, &vid)) {
+ 		br_fdb_update(p->br, p, eth_hdr(skb)->h_source, vid, false);
++		br_debug_check_own_address(p->br, p, eth_hdr(skb)->h_source,
++					   vid, skb);
++	}
+ 	return 0;	 /* process further */
+ }
+ 
+--- a/net/bridge/br_netfilter.c
++++ b/net/bridge/br_netfilter.c
+@@ -64,6 +64,8 @@ static int brnf_pass_vlan_indev __read_m
+ #define brnf_pass_vlan_indev 0
+ #endif
+ 
++extern int br_debug_own_address;
++
+ #define IS_IP(skb) \
+ 	(!vlan_tx_tag_present(skb) && skb->protocol == htons(ETH_P_IP))
+ 
+@@ -968,6 +970,14 @@ static struct ctl_table brnf_table[] = {
+ 		.maxlen		= sizeof(int),
+ 		.mode		= 0644,
+ 		.proc_handler	= brnf_sysctl_call_tables,
++	},
++	{
++		/* TODO allow to use this without BR_NETFILTER */
++		.procname	= "br-debug-own-address",
++		.data		= &br_debug_own_address,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= brnf_sysctl_call_tables,
+ 	},
+ 	{ }
+ };

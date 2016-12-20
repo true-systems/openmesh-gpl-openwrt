@@ -1,0 +1,32 @@
+diff -urw iw-3.17.orig/nl80211.h iw-3.17/nl80211.h
+--- iw-3.17.orig/nl80211.h	2015-11-14 21:00:23.948924505 +0800
++++ iw-3.17/nl80211.h	2015-11-14 21:06:30.941915427 +0800
+@@ -4425,12 +4425,14 @@
+  *	locally administered 1, multicast 0) is assumed.
+  *	This flag must not be requested when the feature isn't supported, check
+  *	the nl80211 feature flags for the device.
++ * @NL80211_SCAN_FLAG_PASSIVE_RADAR: force passive scan on DFS channels
+  */
+ enum nl80211_scan_flags {
+ 	NL80211_SCAN_FLAG_LOW_PRIORITY			= 1<<0,
+ 	NL80211_SCAN_FLAG_FLUSH				= 1<<1,
+ 	NL80211_SCAN_FLAG_AP				= 1<<2,
+ 	NL80211_SCAN_FLAG_RANDOM_ADDR			= 1<<3,
++	NL80211_SCAN_FLAG_PASSIVE_RADAR			= 1<<4,
+ };
+ 
+ /**
+diff -urw iw-3.17.orig/scan.c iw-3.17/scan.c
+--- iw-3.17.orig/scan.c	2015-11-14 21:00:23.948924505 +0800
++++ iw-3.17/scan.c	2015-11-14 21:02:53.550920804 +0800
+@@ -126,6 +126,10 @@
+ 				parse = NONE;
+ 				flags |= NL80211_SCAN_FLAG_AP;
+ 				break;
++			} else if (strcmp(argv[i], "passive-dfs") == 0) {
++				parse = NONE;
++				flags |= NL80211_SCAN_FLAG_PASSIVE_RADAR;
++				break;
+ 			} else if (strcmp(argv[i], "ssid") == 0) {
+ 				parse = SSID;
+ 				have_ssids = true;

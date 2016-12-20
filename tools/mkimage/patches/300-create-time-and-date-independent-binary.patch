@@ -1,0 +1,101 @@
+Origin: other, https://patchwork.ozlabs.org/patch/487530/
+
+--- a/Kconfig
++++ b/Kconfig
+@@ -56,6 +56,15 @@ config CC_OPTIMIZE_FOR_SIZE
+ 
+ 	  This option is enabled by default for U-Boot.
+ 
++	config SYS_EXACT_BINARY
++	bool "Create time and date independent binary"
++	default y
++	help
++	  With this option enabled each compilation creates the exact
++	  same binary. There are no timestamps, with which a U-Boot
++	  binary can be identified.
++	  This option is disabled by default.
++
+ endmenu		# General setup
+ 
+ menu "Boot images"
+--- a/Makefile
++++ b/Makefile
+@@ -765,8 +765,14 @@ endif
+ quiet_cmd_objcopy = OBJCOPY $@
+ cmd_objcopy = $(OBJCOPY) $(OBJCOPYFLAGS) $(OBJCOPYFLAGS_$(@F)) $< $@
+ 
++ifeq ($(CONFIG_SYS_EXACT_BINARY),y)
++MKIMAGEFLAGS_EXTRA = -b
++else
++MKIMAGEFLAGS_EXTRA =
++endif
++
+ quiet_cmd_mkimage = MKIMAGE $@
+-cmd_mkimage = $(objtree)/tools/mkimage $(MKIMAGEFLAGS_$(@F)) -d $< $@ \
++cmd_mkimage = $(objtree)/tools/mkimage $(MKIMAGEFLAGS_EXTRA) $(MKIMAGEFLAGS_$(@F)) -d $< $@ \
+ 	$(if $(KBUILD_VERBOSE:1=), >/dev/null)
+ 
+ quiet_cmd_cat = CAT     $@
+@@ -1109,10 +1115,19 @@ define filechk_version.h
+ 	echo \#define LD_VERSION_STRING \"$$($(LD) --version | head -n 1)\"; )
+ endef
+ 
++ifeq ($(CONFIG_SYS_EXACT_BINARY),y)
++define filechk_timestamp.h
++	(LC_ALL=C date +'#define U_BOOT_DATE "NODATE"'; \
++	LC_ALL=C date +'#define U_BOOT_TIME "NOTIME"'; \
++	LC_ALL=C date +'#define U_BOOT_TZ "NOTZ"')
++endef
++else
+ define filechk_timestamp.h
+ 	(LC_ALL=C date +'#define U_BOOT_DATE "%b %d %C%y"'; \
+-	LC_ALL=C date +'#define U_BOOT_TIME "%T"')
++	LC_ALL=C date +'#define U_BOOT_TIME "%T"'; \
++	LC_ALL=C date +'#define U_BOOT_TZ "%z"')
+ endef
++endif
+ 
+ $(version_h): include/config/uboot.release FORCE
+ 	$(call filechk,version.h)
+--- a/tools/default_image.c
++++ b/tools/default_image.c
+@@ -99,6 +99,8 @@ static void image_set_header(void *ptr,
+ 
+ 	/* Build new header */
+ 	image_set_magic(hdr, params->magic);
++	if (params->bflag)
++		sbuf->st_mtime = 0;
+ 	image_set_time(hdr, sbuf->st_mtime);
+ 	image_set_size(hdr, sbuf->st_size - sizeof(image_header_t));
+ 	image_set_load(hdr, params->addr);
+--- a/tools/imagetool.h
++++ b/tools/imagetool.h
+@@ -31,6 +31,7 @@
+  * type specific functions
+  */
+ struct image_tool_params {
++	int bflag;
+ 	int dflag;
+ 	int eflag;
+ 	int fflag;
+--- a/tools/mkimage.c
++++ b/tools/mkimage.c
+@@ -158,6 +158,9 @@ main (int argc, char **argv)
+ 					genimg_get_arch_id (*++argv)) < 0)
+ 					usage ();
+ 				goto NXTARG;
++			case 'b':
++				params.bflag = 1;
++				break;
+ 			case 'c':
+ 				if (--argc <= 0)
+ 					usage();
+@@ -661,6 +664,8 @@ static void usage(void)
+ #else
+ 	fprintf(stderr, "Signing / verified boot not supported (CONFIG_FIT_SIGNATURE undefined)\n");
+ #endif
++	fprintf(stderr, "       %s -b ==> build exact binary (without date/time stamp)\n",
++		params.cmdname);
+ 	fprintf (stderr, "       %s -V ==> print version information and exit\n",
+ 		params.cmdname);
+ 

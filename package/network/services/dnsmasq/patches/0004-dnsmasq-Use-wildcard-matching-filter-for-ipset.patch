@@ -1,0 +1,37 @@
+From 28fe8b8e9b5cc1f05bdef3440c31bd69e53e0e85 Mon Sep 17 00:00:00 2001
+From: Sven Eckelmann <sven@narfation.org>
+Date: Thu, 6 Mar 2014 13:12:27 +0100
+Subject: [PATCH] dnsmasq: Use wildcard matching filter for ipset
+
+Forwarded: not-needed
+ Changes the matching algorithm in a way upstream doesn't want the matching
+ to happen.
+---
+ src/rfc1035.c | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+--- a/src/rfc1035.c
++++ b/src/rfc1035.c
+@@ -15,6 +15,7 @@
+ */
+ 
+ #include "dnsmasq.h"
++#include "fnmatch.h"
+ 
+ int extract_name(struct dns_header *header, size_t plen, unsigned char **pp, 
+ 		 char *name, int isExtract, int extrabytes)
+@@ -1100,13 +1101,9 @@ int extract_addresses(struct dns_header
+ #ifdef HAVE_IPSET
+ 			  /* Similar algorithm to search_servers. */
+ 			  struct ipsets *ipset_pos;
+-			  unsigned int namelen = strlen(orig_name);
+ 			  for (ipset_pos = daemon->ipsets; ipset_pos; ipset_pos = ipset_pos->next)
+ 			{
+-			      unsigned int domainlen = strlen(ipset_pos->domain);
+-			      char *matchstart = orig_name + namelen - domainlen;
+-			      if (namelen >= domainlen && hostname_isequal(matchstart, ipset_pos->domain) &&
+-				  (domainlen == 0 || namelen == domainlen || *(matchstart - 1) == '.' )) {
++			      if (fnmatch(ipset_pos->domain, orig_name, FNM_CASEFOLD) == 0) {
+ 				ipsets = ipset_pos->sets;
+ 
+ 				if (ipsets && (flags & (F_IPV4 | F_IPV6)))

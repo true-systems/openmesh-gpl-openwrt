@@ -1,0 +1,121 @@
+#!/bin/sh
+
+. /lib/functions/system.sh
+. /lib/ar71xx.sh
+
+install_ath10k_board_bin() {
+	local bus="$1"
+	local device="$2"
+
+	[ -f /tmp/ath10k-board.bin ] || {
+		return
+	}
+
+	cmp -s /tmp/ath10k-board.bin /lib/firmware/ath10k/cal-"$bus"-"$device".bin || {
+		cp /tmp/ath10k-board.bin /lib/firmware/ath10k/cal-"$bus"-"$device".bin
+	}
+	rm -f /tmp/ath10k-board.bin
+}
+
+do_load_ath10k_board_bin() {
+	# load board.bin
+	case $(ar71xx_board_name) in
+		nbg6716)
+			dd if=/dev/mtdblock2 \
+				bs=1 skip=20480 count=2116 \
+				of=/tmp/ath10k-board.bin
+		;;
+		archer-c5 | \
+		archer-c7)
+			local mac
+			mac=$(macaddr_add $(cat /sys/class/net/eth1/address) -2)
+
+			dd if=/dev/mtdblock4 \
+				bs=1 skip=20480 count=6 \
+				of=/tmp/ath10k-board.bin
+			macaddr_2bin $mac >> /tmp/ath10k-board.bin
+			dd if=/dev/mtdblock4 \
+				bs=1 skip=20492 count=2104 >> /tmp/ath10k-board.bin
+		;;
+		mc-mac1200r)
+			local mac
+			mac=$(macaddr_add $(cat /sys/class/net/eth1/address) -1)
+
+			dd if=/dev/mtdblock4 \
+				bs=1 skip=20480 count=6 \
+				of=/tmp/ath10k-board.bin
+			macaddr_2bin $mac >> /tmp/ath10k-board.bin
+			dd if=/dev/mtdblock4 \
+				bs=1 skip=20492 count=2104 >> /tmp/ath10k-board.bin
+		;;
+		r6100)
+			local mac
+			mac=$(macaddr_add $(cat /sys/class/net/eth1/address) +2)
+
+			dd if=/dev/mtdblock2 \
+				bs=1 skip=20480 count=6 \
+				of=/tmp/ath10k-board.bin
+			macaddr_2bin $mac >> /tmp/ath10k-board.bin
+			dd if=/dev/mtdblock2 \
+				bs=1 skip=20492 count=2104 >> /tmp/ath10k-board.bin
+		;;
+		mr1750 | \
+		mr1750v2 | \
+		om5p-acv2)
+			local mac
+			local macbin
+			macbin=$(mtd_get_mac_binary ART 0)
+			mac=$(macaddr_add $macbin +16)
+
+			dd if=/dev/mtdblock7 \
+				bs=1 skip=20480 count=6 \
+				of=/tmp/ath10k-board.bin
+			macaddr_2bin $mac >> /tmp/ath10k-board.bin
+			dd if=/dev/mtdblock7 \
+				bs=1 skip=20492 count=2104 >> /tmp/ath10k-board.bin
+
+			install_ath10k_board_bin "pci" "0000:00:00.0"
+		;;
+		om5p-ac)
+			local mac
+			local macbin
+			macbin=$(mtd_get_mac_binary ART 0)
+			mac=$(macaddr_add $macbin +16)
+
+			dd if=/dev/mtdblock7 \
+				bs=1 skip=20480 count=6 \
+				of=/tmp/ath10k-board.bin
+			macaddr_2bin $mac >> /tmp/ath10k-board.bin
+			dd if=/dev/mtdblock7 \
+				bs=1 skip=20492 count=2104 >> /tmp/ath10k-board.bin
+
+			install_ath10k_board_bin "pci" "0000:01:00.0"
+		;;
+		qihoo-c301)
+			local mac
+
+			mac=$(mtd_get_mac_ascii devdata wlan5mac)
+
+			if [ -z "$mac" ]; then
+				mac=$(macaddr_add $(cat /sys/class/net/eth0/address) -2)
+			fi
+
+			dd if=/dev/mtdblock10 \
+				bs=1 skip=20480 count=6 \
+				of=/tmp/ath10k-board.bin
+			macaddr_2bin $mac >> /tmp/ath10k-board.bin
+			dd if=/dev/mtdblock10 \
+				bs=1 skip=20492 count=2104 >> /tmp/ath10k-board.bin
+
+		;;
+	esac
+	[ -f /tmp/ath10k-board.bin ] || {
+		return
+	}
+	cmp -s /tmp/ath10k-board.bin /lib/firmware/ath10k/QCA988X/hw2.0/board.bin || {
+		cp /tmp/ath10k-board.bin /lib/firmware/ath10k/QCA988X/hw2.0/board.bin
+		rm /tmp/ath10k-board.bin
+	}
+}
+
+boot_hook_add preinit_main do_load_ath10k_board_bin

@@ -1,0 +1,441 @@
+From: Open Mesh <postmaster@open-mesh.com>
+Date: Fri, 18 Sep 2015 09:49:25 +0200
+Subject: [PATCH] add apom led trigger to simulate the ethernet traffic led trigger
+
+Forwarded: not-needed
+ LED trigger is a special purpose solution for Open Mesh. It limitations only
+ fulfill their requirements and is too dependent on the way firmware-ng
+ configures the system
+---
+ include/net/mac80211.h     |  37 ++++++++++++
+ net/mac80211/ieee80211_i.h |  13 ++++-
+ net/mac80211/iface.c       |  15 +++++
+ net/mac80211/led.c         | 138 +++++++++++++++++++++++++++++++++++++++++++++
+ net/mac80211/led.h         |  25 ++++++++
+ net/mac80211/rx.c          |   4 ++
+ net/mac80211/tx.c          |   3 +
+ net/mac80211/util.c        |   3 +
+ 8 files changed, 237 insertions(+), 1 deletion(-)
+
+diff --git a/include/net/mac80211.h b/include/net/mac80211.h
+index db01032..b6d0537 100644
+--- a/include/net/mac80211.h
++++ b/include/net/mac80211.h
+@@ -3171,15 +3171,31 @@ enum ieee80211_tpt_led_trigger_flags {
+ 	IEEE80211_TPT_LEDTRIG_FL_CONNECTED	= BIT(2),
+ };
+ 
++/**
++ * enum ieee80211_apom_led_trigger_flags - throughput trigger flags
++ * @IEEE80211_APOM_LEDTRIG_FL_RADIO: enable blinking with radio
++ * @IEEE80211_APOM_LEDTRIG_FL_WORK: enable blinking when working
++ * @IEEE80211_APOM_LEDTRIG_FL_CONNECTED: enable blinking when at least one
++ *	interface is connected in some way, including being an AP
++ */
++enum ieee80211_apom_led_trigger_flags {
++	IEEE80211_APOM_LEDTRIG_FL_RADIO		= BIT(0),
++	IEEE80211_APOM_LEDTRIG_FL_WORK		= BIT(1),
++	IEEE80211_APOM_LEDTRIG_FL_CONNECTED	= BIT(2),
++};
++
+ #ifdef CPTCFG_MAC80211_LEDS
+ char *__ieee80211_get_tx_led_name(struct ieee80211_hw *hw);
+ char *__ieee80211_get_rx_led_name(struct ieee80211_hw *hw);
+ char *__ieee80211_get_assoc_led_name(struct ieee80211_hw *hw);
+ char *__ieee80211_get_radio_led_name(struct ieee80211_hw *hw);
++extern char *__ieee80211_get_apom_led_name(struct ieee80211_hw *hw);
+ char *__ieee80211_create_tpt_led_trigger(struct ieee80211_hw *hw,
+ 					 unsigned int flags,
+ 					 const struct ieee80211_tpt_blink *blink_table,
+ 					 unsigned int blink_table_len);
++extern char *__ieee80211_create_apom_led_trigger(
++				struct ieee80211_hw *hw, unsigned int flags);
+ #endif
+ /**
+  * ieee80211_get_tx_led_name - get name of TX LED
+@@ -3291,6 +3307,27 @@ ieee80211_create_tpt_led_trigger(struct ieee80211_hw *hw, unsigned int flags,
+ }
+ 
+ /**
++ * ieee80211_get_apom_led_name - get name of APOM LED trigger
++ *
++ * mac80211 creates a radio change LED trigger for each wireless hardware
++ * that can be used to drive LEDs if your driver registers a LED device.
++ * This function returns the name (or %NULL if not configured for LEDs)
++ * of the trigger so you can automatically link the LED device.
++ *
++ * @hw: the hardware to get the LED trigger name for
++ *
++ * Return: The name of the LED trigger. %NULL if not configured for LEDs.
++ */
++static inline char *ieee80211_get_apom_led_name(struct ieee80211_hw *hw)
++{
++#ifdef CPTCFG_MAC80211_LEDS
++	return __ieee80211_get_apom_led_name(hw);
++#else
++	return NULL;
++#endif
++}
++
++/**
+  * ieee80211_unregister_hw - Unregister a hardware device
+  *
+  * This function instructs mac80211 to free allocated resources
+diff --git a/net/mac80211/ieee80211_i.h b/net/mac80211/ieee80211_i.h
+index d66957a..b669134 100644
+--- a/net/mac80211/ieee80211_i.h
++++ b/net/mac80211/ieee80211_i.h
+@@ -1022,6 +1022,16 @@ struct tpt_led_trigger {
+ 	unsigned int active, want;
+ 	bool running;
+ };
++
++struct apom_led_trigger {
++	struct led_trigger trig;
++	char name[32];
++	struct timer_list timer;
++	unsigned long prev_traffic;
++	unsigned long tx_packets, rx_packets;
++	unsigned int active, want;
++	bool running;
++};
+ #endif
+ 
+ /*
+@@ -1276,8 +1286,9 @@ struct ieee80211_local {
+ #endif
+ 	struct led_trigger *tx_led, *rx_led, *assoc_led, *radio_led;
+ 	struct tpt_led_trigger *tpt_led_trigger;
++	struct apom_led_trigger *apom_led_trigger;
+ 	char tx_led_name[32], rx_led_name[32],
+-	     assoc_led_name[32], radio_led_name[32];
++	     assoc_led_name[32], radio_led_name[32], apom_led_name[32];
+ #endif
+ 
+ #ifdef CPTCFG_MAC80211_DEBUG_COUNTERS
+diff --git a/net/mac80211/iface.c b/net/mac80211/iface.c
+index 9952720..d702f63 100644
+--- a/net/mac80211/iface.c
++++ b/net/mac80211/iface.c
+@@ -104,6 +104,7 @@ static u32 __ieee80211_recalc_idle(struct ieee80211_local *local,
+ {
+ 	bool working, scanning, active;
+ 	unsigned int led_trig_start = 0, led_trig_stop = 0;
++	unsigned int apom_led_trig_start = 0, apom_led_trig_stop = 0;
+ 
+ 	lockdep_assert_held(&local->mtx);
+ 
+@@ -122,12 +123,23 @@ static u32 __ieee80211_recalc_idle(struct ieee80211_local *local,
+ 	else
+ 		led_trig_stop |= IEEE80211_TPT_LEDTRIG_FL_WORK;
+ 
++	if (working)
++		apom_led_trig_start |= IEEE80211_APOM_LEDTRIG_FL_WORK;
++	else
++		apom_led_trig_stop |= IEEE80211_APOM_LEDTRIG_FL_WORK;
++
+ 	if (active)
+ 		led_trig_start |= IEEE80211_TPT_LEDTRIG_FL_CONNECTED;
+ 	else
+ 		led_trig_stop |= IEEE80211_TPT_LEDTRIG_FL_CONNECTED;
+ 
++	if (active)
++		apom_led_trig_start |= IEEE80211_APOM_LEDTRIG_FL_CONNECTED;
++	else
++		apom_led_trig_stop |= IEEE80211_APOM_LEDTRIG_FL_CONNECTED;
++
+ 	ieee80211_mod_tpt_led_trig(local, led_trig_start, led_trig_stop);
++	ieee80211_mod_apom_led_trig(local, apom_led_trig_start, apom_led_trig_stop);
+ 
+ 	if (working || scanning || active)
+ 		return __ieee80211_idle_off(local);
+@@ -552,6 +564,9 @@ int ieee80211_do_open(struct wireless_dev *wdev, bool coming_up)
+ 		ieee80211_led_radio(local, true);
+ 		ieee80211_mod_tpt_led_trig(local,
+ 					   IEEE80211_TPT_LEDTRIG_FL_RADIO, 0);
++
++		ieee80211_mod_apom_led_trig(local,
++					    IEEE80211_APOM_LEDTRIG_FL_RADIO, 0);
+ 	}
+ 
+ 	/*
+diff --git a/net/mac80211/led.c b/net/mac80211/led.c
+index 48be974..9fe288c 100644
+--- a/net/mac80211/led.c
++++ b/net/mac80211/led.c
+@@ -78,8 +78,12 @@ void ieee80211_led_names(struct ieee80211_local *local)
+ 		 "%sassoc", wiphy_name(local->hw.wiphy));
+ 	snprintf(local->radio_led_name, sizeof(local->radio_led_name),
+ 		 "%sradio", wiphy_name(local->hw.wiphy));
++	snprintf(local->apom_led_name, sizeof(local->apom_led_name),
++		 "%sapom", wiphy_name(local->hw.wiphy));
+ }
+ 
++static void apom_led_trigger_init(struct ieee80211_local *local);
++
+ void ieee80211_led_init(struct ieee80211_local *local)
+ {
+ 	local->rx_led = kzalloc(sizeof(struct led_trigger), GFP_KERNEL);
+@@ -118,6 +122,16 @@ void ieee80211_led_init(struct ieee80211_local *local)
+ 		}
+ 	}
+ 
++	local->apom_led_trigger = kzalloc(sizeof(struct apom_led_trigger),
++					  GFP_KERNEL);
++	if (local->apom_led_trigger) {
++		apom_led_trigger_init(local);
++		if (led_trigger_register(&local->apom_led_trigger->trig)) {
++			kfree(local->apom_led_trigger);
++			local->apom_led_trigger = NULL;
++		}
++	}
++
+ 	if (local->tpt_led_trigger) {
+ 		if (led_trigger_register(&local->tpt_led_trigger->trig)) {
+ 			kfree(local->tpt_led_trigger);
+@@ -149,6 +163,11 @@ void ieee80211_led_exit(struct ieee80211_local *local)
+ 		led_trigger_unregister(&local->tpt_led_trigger->trig);
+ 		kfree(local->tpt_led_trigger);
+ 	}
++
++	if (local->apom_led_trigger) {
++		led_trigger_unregister(&local->apom_led_trigger->trig);
++		kfree(local->apom_led_trigger);
++	}
+ }
+ 
+ char *__ieee80211_get_radio_led_name(struct ieee80211_hw *hw)
+@@ -183,6 +202,14 @@ char *__ieee80211_get_rx_led_name(struct ieee80211_hw *hw)
+ }
+ EXPORT_SYMBOL(__ieee80211_get_rx_led_name);
+ 
++char *__ieee80211_get_apom_led_name(struct ieee80211_hw *hw)
++{
++	struct ieee80211_local *local = hw_to_local(hw);
++
++	return local->apom_led_name;
++}
++EXPORT_SYMBOL(__ieee80211_get_apom_led_name);
++
+ static unsigned long tpt_trig_traffic(struct ieee80211_local *local,
+ 				      struct tpt_led_trigger *tpt_trig)
+ {
+@@ -320,3 +347,114 @@ void ieee80211_mod_tpt_led_trig(struct ieee80211_local *local,
+ 	else
+ 		ieee80211_start_tpt_led_trig(local);
+ }
++
++/* apom traffic type */
++
++static unsigned int apom_trig_traffic(struct ieee80211_local *local,
++				      struct apom_led_trigger *apom_trig)
++{
++	unsigned long traffic, prev_traffic;
++
++	traffic = apom_trig->tx_packets + apom_trig->rx_packets;
++	prev_traffic = apom_trig->prev_traffic;
++	apom_trig->prev_traffic = traffic;
++
++	if (traffic != prev_traffic)
++		return 1;
++	else
++		return 0;
++}
++
++static void apom_trig_timer(unsigned long data)
++{
++	struct ieee80211_local *local = (void *)data;
++	struct apom_led_trigger *apom_trig = local->apom_led_trigger;
++	struct led_classdev *led_cdev;
++	unsigned int new_activity;
++
++	if (!apom_trig->running)
++		return;
++
++	new_activity = apom_trig_traffic(local, apom_trig);
++
++	read_lock(&apom_trig->trig.leddev_list_lock);
++	list_for_each_entry(led_cdev, &apom_trig->trig.led_cdevs, trig_list) {
++		if (led_cdev->brightness == LED_OFF) {
++			led_set_brightness(led_cdev, LED_FULL);
++		} else {
++			if (new_activity)
++				led_set_brightness(led_cdev, LED_OFF);
++		}
++	}
++	read_unlock(&apom_trig->trig.leddev_list_lock);
++
++	mod_timer(&apom_trig->timer, jiffies + msecs_to_jiffies(50));
++}
++
++static void apom_led_trigger_init(struct ieee80211_local *local)
++{
++	local->apom_led_trigger->trig.name = local->apom_led_name;
++	local->apom_led_trigger->want = IEEE80211_APOM_LEDTRIG_FL_RADIO;
++	setup_timer(&local->apom_led_trigger->timer, apom_trig_timer,
++		    (unsigned long)local);
++}
++
++static void ieee80211_start_apom_led_trig(struct ieee80211_local *local)
++{
++	struct apom_led_trigger *apom_trig = local->apom_led_trigger;
++
++	if (apom_trig->running)
++		return;
++
++	/* reset traffic */
++	apom_trig_traffic(local, apom_trig);
++	apom_trig->running = true;
++
++	apom_trig_timer((unsigned long)local);
++	mod_timer(&apom_trig->timer, jiffies + msecs_to_jiffies(50));
++}
++
++static void ieee80211_stop_apom_led_trig(struct ieee80211_local *local)
++{
++	struct apom_led_trigger *apom_trig = local->apom_led_trigger;
++	struct led_classdev *led_cdev;
++
++	if (!apom_trig->running)
++		return;
++
++	apom_trig->running = false;
++	del_timer_sync(&apom_trig->timer);
++
++	read_lock(&apom_trig->trig.leddev_list_lock);
++	list_for_each_entry(led_cdev, &apom_trig->trig.led_cdevs, trig_list)
++		led_set_brightness(led_cdev, LED_OFF);
++	read_unlock(&apom_trig->trig.leddev_list_lock);
++}
++
++void ieee80211_mod_apom_led_trig(struct ieee80211_local *local,
++				unsigned int types_on, unsigned int types_off)
++{
++	struct apom_led_trigger *apom_trig = local->apom_led_trigger;
++	bool allowed;
++
++	WARN_ON(types_on & types_off);
++
++	if (!apom_trig)
++		return;
++
++	apom_trig->active &= ~types_off;
++	apom_trig->active |= types_on;
++
++	/*
++	 * Regardless of wanted state, we shouldn't blink when
++	 * the radio is disabled -- this can happen due to some
++	 * code ordering issues with __ieee80211_recalc_idle()
++	 * being called before the radio is started.
++	 */
++	allowed = apom_trig->active & IEEE80211_APOM_LEDTRIG_FL_RADIO;
++
++	if (!allowed || !(apom_trig->active & apom_trig->want))
++		ieee80211_stop_apom_led_trig(local);
++	else
++		ieee80211_start_apom_led_trig(local);
++}
+diff --git a/net/mac80211/led.h b/net/mac80211/led.h
+index 9da63b5..1cdaff5 100644
+--- a/net/mac80211/led.h
++++ b/net/mac80211/led.h
+@@ -23,6 +23,8 @@ void ieee80211_led_init(struct ieee80211_local *local);
+ void ieee80211_led_exit(struct ieee80211_local *local);
+ void ieee80211_mod_tpt_led_trig(struct ieee80211_local *local,
+ 				unsigned int types_on, unsigned int types_off);
++void ieee80211_mod_apom_led_trig(struct ieee80211_local *local,
++				unsigned int types_on, unsigned int types_off);
+ #else
+ static inline void ieee80211_led_rx(struct ieee80211_local *local)
+ {
+@@ -52,6 +54,11 @@ static inline void ieee80211_mod_tpt_led_trig(struct ieee80211_local *local,
+ 					      unsigned int types_off)
+ {
+ }
++static inline void ieee80211_mod_apom_led_trig(struct ieee80211_local *local,
++					      unsigned int types_on,
++					      unsigned int types_off)
++{
++}
+ #endif
+ 
+ static inline void
+@@ -64,6 +71,15 @@ ieee80211_tpt_led_trig_tx(struct ieee80211_local *local, __le16 fc, int bytes)
+ }
+ 
+ static inline void
++ieee80211_apom_led_trig_tx(struct ieee80211_local *local, __le16 fc)
++{
++#ifdef CPTCFG_MAC80211_LEDS
++	if (local->apom_led_trigger && ieee80211_is_data(fc))
++		local->apom_led_trigger->tx_packets += 1;
++#endif
++}
++
++static inline void
+ ieee80211_tpt_led_trig_rx(struct ieee80211_local *local, __le16 fc, int bytes)
+ {
+ #ifdef CPTCFG_MAC80211_LEDS
+@@ -71,3 +87,12 @@ ieee80211_tpt_led_trig_rx(struct ieee80211_local *local, __le16 fc, int bytes)
+ 		local->tpt_led_trigger->rx_bytes += bytes;
+ #endif
+ }
++
++static inline void
++ieee80211_apom_led_trig_rx(struct ieee80211_local *local)
++{
++#ifdef CPTCFG_MAC80211_LEDS
++	if (local->apom_led_trigger)
++		local->apom_led_trigger->rx_packets += 1;
++#endif
++}
+diff --git a/net/mac80211/rx.c b/net/mac80211/rx.c
+index b98a58f..93444c3 100644
+--- a/net/mac80211/rx.c
++++ b/net/mac80211/rx.c
+@@ -2012,6 +2012,10 @@ ieee80211_deliver_skb(struct ieee80211_rx_data *rx)
+ 			napi_gro_receive(rx->local->napi, skb);
+ 		else
+ 			netif_receive_skb(skb);
++
++		if (sdata->vif.type == NL80211_IFTYPE_AP ||
++		    sdata->vif.type == NL80211_IFTYPE_AP_VLAN)
++			ieee80211_apom_led_trig_rx(sdata->local);
+ 	}
+ 
+ 	if (xmit_skb) {
+diff --git a/net/mac80211/tx.c b/net/mac80211/tx.c
+index b6b9c9b..8e131e8 100644
+--- a/net/mac80211/tx.c
++++ b/net/mac80211/tx.c
+@@ -1331,6 +1331,9 @@ static bool __ieee80211_tx(struct ieee80211_local *local,
+ 				    txpending);
+ 
+ 	ieee80211_tpt_led_trig_tx(local, fc, led_len);
++	if (sdata->vif.type == NL80211_IFTYPE_AP ||
++	    sdata->vif.type == NL80211_IFTYPE_AP_VLAN)
++		ieee80211_apom_led_trig_tx(local, fc);
+ 
+ 	WARN_ON_ONCE(!skb_queue_empty(skbs));
+ 
+diff --git a/net/mac80211/util.c b/net/mac80211/util.c
+index f9319a5..5570c95 100644
+--- a/net/mac80211/util.c
++++ b/net/mac80211/util.c
+@@ -1617,6 +1617,7 @@ void ieee80211_stop_device(struct ieee80211_local *local)
+ {
+ 	ieee80211_led_radio(local, false);
+ 	ieee80211_mod_tpt_led_trig(local, 0, IEEE80211_TPT_LEDTRIG_FL_RADIO);
++	ieee80211_mod_apom_led_trig(local, 0, IEEE80211_APOM_LEDTRIG_FL_RADIO);
+ 
+ 	cancel_work_sync(&local->reconfig_filter);
+ 
+@@ -1745,6 +1746,8 @@ int ieee80211_reconfig(struct ieee80211_local *local)
+ 	ieee80211_led_radio(local, true);
+ 	ieee80211_mod_tpt_led_trig(local,
+ 				   IEEE80211_TPT_LEDTRIG_FL_RADIO, 0);
++	ieee80211_mod_apom_led_trig(local,
++				   IEEE80211_APOM_LEDTRIG_FL_RADIO, 0);
+ 
+ 	/* add interfaces */
+ 	sdata = rtnl_dereference(local->monitor_sdata);

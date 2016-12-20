@@ -1,0 +1,39 @@
+From 689556af7d1d25bee0842a5eda2f01084231e9af Mon Sep 17 00:00:00 2001
+From: Simon Wunderlich <simon@open-mesh.com>
+Date: Tue, 6 Aug 2013 19:16:45 +0200
+Subject: [PATCH] dnsmasq: don't allow invalid context for DHCPINFORM
+
+This should fix sending packets to wrong subnets where dnsmasq is
+not supposed to be running. We have seen that behaviour in hotspot
+networks where dnsmasq serves the WiFi, but sends DHCPACKS to the
+LAN because the default gateway is there and the DHCPINFORM source
+address was not routeable. Rogue DHCPACKS on the LAN are not acceptable
+in this network.
+
+Signed-off-by: Simon Wunderlich <simon@open-mesh.com>
+
+Forwarded: no
+---
+ src/rfc2131.c |    9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+--- a/src/rfc2131.c
++++ b/src/rfc2131.c
+@@ -1385,12 +1385,12 @@ size_t dhcp_reply(struct dhcp_context *c
+ 	message = _("ignored");
+       
+       log_packet("DHCPINFORM", &mess->ciaddr, emac, emac_len, iface_name, message, NULL, mess->xid);
+-     
+-      if (message || mess->ciaddr.s_addr == 0)
+-	return 0;
+-
+-      /* For DHCPINFORM only, cope without a valid context */
+       context = narrow_context(context, mess->ciaddr, tagif_netid);
++
++      /* don't allow to be used without a valid context (it might not be possible that
++       * we can't route the packet, or send it to the wrong interface) */
++      if (message || mess->ciaddr.s_addr == 0 || !context)
++	return 0;
+       
+       /* Find a least based on IP address if we didn't
+ 	 get one from MAC address/client-d */

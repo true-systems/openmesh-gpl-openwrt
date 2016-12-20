@@ -1,0 +1,97 @@
+From d6ce1ad7a016797d6844380d9644b3d07cd9c208 Mon Sep 17 00:00:00 2001
+From: Simon Wunderlich <siwu@hrz.tu-chemnitz.de>
+Date: Tue, 18 Jun 2013 12:25:27 +0200
+Subject: [PATCH] ath9k: add workaround for hanging chip (not enough
+ interrupts)
+
+Signed-off-by: Simon Wunderlich <siwu@hrz.tu-chemnitz.de>
+
+Forwarded: no
+---
+ drivers/net/wireless/ath/ath9k/ath9k.h |  4 ++++
+ drivers/net/wireless/ath/ath9k/debug.c |  4 ++++
+ drivers/net/wireless/ath/ath9k/debug.h |  1 +
+ drivers/net/wireless/ath/ath9k/link.c  | 28 ++++++++++++++++++++++++++++
+ drivers/net/wireless/ath/ath9k/main.c  |  2 ++
+ 5 files changed, 39 insertions(+)
+
+--- a/drivers/net/wireless/ath/ath9k/ath9k.h
++++ b/drivers/net/wireless/ath/ath9k/ath9k.h
+@@ -1009,6 +1009,9 @@ struct ath_softc {
+ 	short nbcnvifs;
+ 	unsigned long ps_usecount;
+ 
++	u64 last_check_time;
++	u32 last_check_interrupts;
++
+ 	struct ath_rx rx;
+ 	struct ath_tx tx;
+ 	struct ath_beacon beacon;
+--- a/drivers/net/wireless/ath/ath9k/debug.c
++++ b/drivers/net/wireless/ath/ath9k/debug.c
+@@ -866,6 +866,7 @@ static ssize_t read_file_reset(struct fi
+ 		[RESET_TYPE_MCI] = "MCI Reset",
+ 		[RESET_TYPE_CALIBRATION] = "Calibration error",
+ 		[RESET_TYPE_DEADBEEF] = "deadbeef hang",
++		[RESET_TYPE_DEAF] = "deaf hang",
+ 	};
+ 	char buf[512];
+ 	unsigned int len = 0;
+--- a/drivers/net/wireless/ath/ath9k/debug.h
++++ b/drivers/net/wireless/ath/ath9k/debug.h
+@@ -51,6 +51,7 @@ enum ath_reset_type {
+ 	RESET_TYPE_MCI,
+ 	RESET_TYPE_CALIBRATION,
+ 	RESET_TYPE_DEADBEEF,
++	RESET_TYPE_DEAF,
+ 	__RESET_TYPE_MAX
+ };
+ 
+--- a/drivers/net/wireless/ath/ath9k/link.c
++++ b/drivers/net/wireless/ath/ath9k/link.c
+@@ -349,6 +349,34 @@ void ath_ani_calibrate(unsigned long dat
+ 		common->ani.longcal_timer = timestamp;
+ 	}
+ 
++	/* one more check for stuck MAC - not reasonably enough rx interrupts? */
++	ath_dbg(common, CALIBRATE, "DEAFFIX: Doing a %s cal\n", longcal ? "long" : "short");
++	if (longcal) {
++		u32 interval, interrupts, interrupt_per_s;
++
++		interval = jiffies_to_msecs(jiffies - sc->last_check_time);
++		if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_EDMA)
++			interrupts = sc->debug.stats.istats.rxlp - sc->last_check_interrupts;
++		else
++			interrupts = sc->debug.stats.istats.rxok - sc->last_check_interrupts;
++
++		/* sanity check, should be 30 seconds */
++		if (interval < 40000 && interval > 20000) {
++			/* should be at least one interrupt per second */
++			interrupt_per_s = interrupts / (interval / 1000);
++			ath_dbg(common, CALIBRATE, "DEAFFIX: Got %u interrupts in %u sec, %u i/s\n", interrupts, (interval / 1000), interrupt_per_s);
++			if (interrupt_per_s < 1) {
++				printk("ath9k: reset deaf state\n");
++				ath9k_queue_reset(sc, RESET_TYPE_DEAF);
++			}
++		}
++		if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_EDMA)
++			sc->last_check_interrupts = sc->debug.stats.istats.rxlp;
++		else
++			sc->last_check_interrupts = sc->debug.stats.istats.rxok;
++		sc->last_check_time = jiffies;
++	}
++
+ 	/* Short calibration applies only while caldone is false */
+ 	if (!common->ani.caldone) {
+ 		if ((timestamp - common->ani.shortcal_timer) >= short_cal_interval) {
+--- a/drivers/net/wireless/ath/ath9k/main.c
++++ b/drivers/net/wireless/ath/ath9k/main.c
+@@ -670,6 +670,8 @@ static int ath9k_start(struct ieee80211_
+ 		"Starting driver with initial channel: %d MHz\n",
+ 		curchan->center_freq);
+ 
++	printk("ath9k: DEAF fix v0.1\n");
++
+ 	ath9k_ps_wakeup(sc);
+ 	mutex_lock(&sc->mutex);
+ 

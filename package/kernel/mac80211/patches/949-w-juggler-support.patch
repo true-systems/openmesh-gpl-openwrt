@@ -1,0 +1,665 @@
+Forwarded: no
+
+diff -Nurw compat-wireless-2014-11-04.orig/include/net/batman-adv.h compat-wireless-2014-11-04/include/net/batman-adv.h
+--- compat-wireless-2014-11-04.orig/include/net/batman-adv.h	1970-01-01 01:00:00.000000000 +0100
++++ compat-wireless-2014-11-04/include/net/batman-adv.h	2015-04-03 15:02:52.685386344 +0200
+@@ -0,0 +1,24 @@
++/* Copyright (C) 2012-2016 B.A.T.M.A.N. contributors:
++ * Antonio Quartulli <antonio@open-mesh.com>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of version 2 of the GNU General Public
++ * License as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
++ * 02110-1301, USA
++ */
++
++#ifndef _NET_BATMAN_ADV_H_
++#define _NET_BATMAN_ADV_H_
++
++bool batadv_is_mesh_client(const unsigned char *addr);
++
++#endif /* _NET_BATMAN_ADV_H_ */
+diff -Nurw compat-wireless-2014-11-04.orig/.local-symbols compat-wireless-2014-11-04/.local-symbols
+--- compat-wireless-2014-11-04.orig/.local-symbols	2015-04-03 15:02:49.742386417 +0200
++++ compat-wireless-2014-11-04/.local-symbols	2015-04-03 15:03:27.622385480 +0200
+@@ -42,6 +42,8 @@
+ MAC80211_RC_MINSTREL_VHT=
+ MAC80211_RC_DEFAULT_MINSTREL=
+ MAC80211_RC_DEFAULT=
++MAC80211_AP_STA_TRACKING=
++MAC80211_AP_STA_TRACKING_BATMAN_ADV=
+ MAC80211_MESH=
+ MAC80211_LEDS=
+ MAC80211_DEBUGFS=
+diff -Nurw compat-wireless-2014-11-04.orig/net/mac80211/debugfs.c compat-wireless-2014-11-04/net/mac80211/debugfs.c
+--- compat-wireless-2014-11-04.orig/net/mac80211/debugfs.c	2015-04-03 15:02:49.821386415 +0200
++++ compat-wireless-2014-11-04/net/mac80211/debugfs.c	2015-04-03 15:02:52.685386344 +0200
+@@ -23,6 +23,91 @@
+ #define TX_LATENCY_BINS_DISABLED "enable(bins disabled)\n"
+ #define TX_LATENCY_DISABLED "disable\n"
+ 
++#ifdef CPTCFG_MAC80211_AP_STA_TRACKING
++static ssize_t sta_tracking_table_read(struct file *file, char __user *user_buf,
++				   size_t count, loff_t *ppos)
++{
++	int res;
++	ssize_t rv;
++	struct ieee80211_local *local = file->private_data;
++	struct ieee80211_sta_tracking *sta;
++	int buflen = (atomic_read(&local->sta_tracking_num) + 2) * 100;
++	char *buf = kzalloc(buflen, GFP_KERNEL);
++	long unsigned int cur_time = jiffies;
++
++	res = snprintf(buf, buflen,
++		       "stations: %u\n"
++		       "    MAC Addr      avg_rssi last_rssi last_irssi_t avg_ipi  last_ipi  last_ipi_t\n",
++		       atomic_read(&local->sta_tracking_num));
++
++	rcu_read_lock();
++	list_for_each_entry_rcu(sta, &local->sta_tracking_list, list) {
++		if ((buflen - res) <= 0)
++			break;
++
++		res += snprintf(buf + res, buflen - res, "%pM %6ld %8d   %8u   %8u  %8u   %8u\n",
++				sta->addr, -ewma_read(&sta->avg_rssi),
++				sta->last_rssi,
++				jiffies_to_msecs(cur_time - sta->last_rssi_seen),
++				jiffies_to_msecs(ewma_read(&sta->avg_ipi)),
++				jiffies_to_msecs(sta->last_ipi),
++				jiffies_to_msecs(cur_time - sta->last_ipi_seen));
++	}
++	rcu_read_unlock();
++
++	rv = simple_read_from_buffer(user_buf, count, ppos, buf, res);
++	kfree(buf);
++	return rv;
++}
++
++static ssize_t sta_tracking_state_read(struct file *file, char __user *user_buf,
++				   size_t count, loff_t *ppos)
++{
++	int res;
++	struct ieee80211_local *local = file->private_data;
++	char buf[10];
++
++	res = snprintf(buf, 10, "%u\n", atomic_read(&local->sta_tracking_state));
++
++	return simple_read_from_buffer(user_buf, count, ppos, buf, res);
++}
++
++static ssize_t sta_tracking_state_write(struct file *file,
++				    const char __user *user_buf,
++				    size_t count, loff_t *ppos)
++{
++	struct ieee80211_local *local = file->private_data;
++	unsigned long value;
++	char _buf[2];
++	int ret;
++
++	if (count > sizeof(_buf))
++		return -E2BIG;
++
++	if (copy_from_user(_buf, user_buf, count))
++		return -EFAULT;
++
++	_buf[count] = '\0';
++
++	if (kstrtoul(_buf, 10, &value) < 0)
++		return -EINVAL;
++
++	if (value != 0 && value != 1)
++		return -EINVAL;
++
++	atomic_set(&local->sta_tracking_state, value);
++
++	return count;
++}
++
++static const struct file_operations sta_tracking_state_ops = {
++	.write = sta_tracking_state_write,
++	.read = sta_tracking_state_read,
++	.open = simple_open,
++	.llseek = noop_llseek,
++};
++#endif
++
+ 
+ /*
+  * Display if Tx latency statistics & bins are enabled/disabled
+@@ -342,6 +427,9 @@
+ 
+ DEBUGFS_READONLY_FILE_OPS(hwflags);
+ DEBUGFS_READONLY_FILE_OPS(queues);
++#ifdef CPTCFG_MAC80211_AP_STA_TRACKING
++DEBUGFS_READONLY_FILE_OPS(sta_tracking_table);
++#endif
+ 
+ /* statistics stuff */
+ 
+@@ -416,6 +504,10 @@
+ 	DEBUGFS_ADD(hwflags);
+ 	DEBUGFS_ADD(user_power);
+ 	DEBUGFS_ADD(power);
++#ifdef CPTCFG_MAC80211_AP_STA_TRACKING
++	DEBUGFS_ADD(sta_tracking_table);
++	DEBUGFS_ADD(sta_tracking_state);
++#endif
+ 
+ 	statsd = debugfs_create_dir("statistics", phyd);
+ 
+diff -Nurw compat-wireless-2014-11-04.orig/net/mac80211/ieee80211_i.h compat-wireless-2014-11-04/net/mac80211/ieee80211_i.h
+--- compat-wireless-2014-11-04.orig/net/mac80211/ieee80211_i.h	2015-04-03 15:02:49.820386415 +0200
++++ compat-wireless-2014-11-04/net/mac80211/ieee80211_i.h	2015-04-03 15:02:52.893386339 +0200
+@@ -32,6 +32,7 @@
+ #include "key.h"
+ #include "sta_info.h"
+ #include "debug.h"
++#include "sta_tracking.h"
+ 
+ struct ieee80211_local;
+ 
+@@ -1373,6 +1374,15 @@
+ 	struct ieee80211_sub_if_data __rcu *monitor_sdata;
+ 	struct cfg80211_chan_def monitor_chandef;
+ 
++#ifdef CPTCFG_MAC80211_AP_STA_TRACKING
++	atomic_t sta_tracking_state; /* bool */
++	struct delayed_work sta_tracking_dwork;
++	spinlock_t sta_tracking_lock; /* protects sta_tracking_list */
++	struct list_head sta_tracking_list;
++	atomic_t sta_tracking_num;
++	struct ieee80211_sta_tracking *sta_tracking_hash[IEEE80211_STA_TRACKING_HASH_SIZE];
++#endif
++
+ 	/* extended capabilities provided by mac80211 */
+ 	u8 ext_capa[8];
+ };
+diff -Nurw compat-wireless-2014-11-04.orig/net/mac80211/Kconfig compat-wireless-2014-11-04/net/mac80211/Kconfig
+--- compat-wireless-2014-11-04.orig/net/mac80211/Kconfig	2015-04-03 15:02:49.821386415 +0200
++++ compat-wireless-2014-11-04/net/mac80211/Kconfig	2015-04-03 15:02:52.893386339 +0200
+@@ -304,3 +304,12 @@
+ 	  and show them in debugfs.
+ 
+ 	  If unsure, say N.
++
++config MAC80211_AP_STA_TRACKING
++	bool "Track stations that are not associated"
++	depends on MAC80211
++	depends on MAC80211_DEBUGFS
++
++config MAC80211_AP_STA_TRACKING_BATMAN_ADV
++	bool "Enable the sta tracking mechanism to talk to batman-adv"
++	depends on MAC80211_AP_STA_TRACKING
+diff -Nurw compat-wireless-2014-11-04.orig/net/mac80211/main.c compat-wireless-2014-11-04/net/mac80211/main.c
+--- compat-wireless-2014-11-04.orig/net/mac80211/main.c	2015-04-03 15:02:49.820386415 +0200
++++ compat-wireless-2014-11-04/net/mac80211/main.c	2015-04-03 15:02:52.893386339 +0200
+@@ -34,6 +34,7 @@
+ #include "led.h"
+ #include "cfg.h"
+ #include "debugfs.h"
++#include "sta_tracking.h"
+ 
+ void ieee80211_configure_filter(struct ieee80211_local *local)
+ {
+@@ -637,6 +638,7 @@
+ 	idr_init(&local->ack_status_frames);
+ 
+ 	sta_info_init(local);
++	ieee80211_sta_tracking_init(local);
+ 
+ 	for (i = 0; i < IEEE80211_MAX_QUEUES; i++) {
+ 		skb_queue_head_init(&local->pending[i]);
+@@ -1086,6 +1088,7 @@
+ 	rtnl_unlock();
+ 	ieee80211_wep_free(local);
+ 	sta_info_stop(local);
++	ieee80211_sta_tracking_stop(local);
+ 	destroy_workqueue(local->workqueue);
+  fail_workqueue:
+ 	wiphy_unregister(local->hw.wiphy);
+diff -Nurw compat-wireless-2014-11-04.orig/net/mac80211/Makefile compat-wireless-2014-11-04/net/mac80211/Makefile
+--- compat-wireless-2014-11-04.orig/net/mac80211/Makefile	2015-04-03 15:02:49.822386415 +0200
++++ compat-wireless-2014-11-04/net/mac80211/Makefile	2015-04-03 15:02:52.893386339 +0200
+@@ -58,4 +58,6 @@
+ mac80211-$(CPTCFG_MAC80211_RC_MINSTREL) += $(rc80211_minstrel-y)
+ mac80211-$(CPTCFG_MAC80211_RC_MINSTREL_HT) += $(rc80211_minstrel_ht-y)
+ 
++mac80211-$(CPTCFG_MAC80211_AP_STA_TRACKING) += sta_tracking.o
++
+ ccflags-y += -D__CHECK_ENDIAN__ -DDEBUG
+diff -Nurw compat-wireless-2014-11-04.orig/net/mac80211/rx.c compat-wireless-2014-11-04/net/mac80211/rx.c
+--- compat-wireless-2014-11-04.orig/net/mac80211/rx.c	2015-04-03 15:02:49.821386415 +0200
++++ compat-wireless-2014-11-04/net/mac80211/rx.c	2015-04-03 15:02:52.894386339 +0200
+@@ -1951,6 +1951,9 @@
+ 	    !(sdata->flags & IEEE80211_SDATA_DONT_BRIDGE_PACKETS) &&
+ 	    (status->rx_flags & IEEE80211_RX_RA_MATCH) &&
+ 	    (sdata->vif.type != NL80211_IFTYPE_AP_VLAN || !sdata->u.vlan.sta)) {
++		/* compute the IPI for the current sending station */
++		ieee80211_sta_tracking_update_ipi(rx->local, ehdr->h_source);
++
+ 		if (is_multicast_ether_addr(ehdr->h_dest)) {
+ 			/*
+ 			 * send multicast frames both to higher layers in
+@@ -3486,6 +3489,7 @@
+ 	ieee80211_tpt_led_trig_rx(local,
+ 			((struct ieee80211_hdr *)skb->data)->frame_control,
+ 			skb->len);
++	ieee80211_sta_tracking_update(skb, hw);
+ 	__ieee80211_rx_handle_packet(hw, skb);
+ 
+ 	rcu_read_unlock();
+diff -Nurw compat-wireless-2014-11-04.orig/net/mac80211/sta_tracking_batman_adv.h compat-wireless-2014-11-04/net/mac80211/sta_tracking_batman_adv.h
+--- compat-wireless-2014-11-04.orig/net/mac80211/sta_tracking_batman_adv.h	1970-01-01 01:00:00.000000000 +0100
++++ compat-wireless-2014-11-04/net/mac80211/sta_tracking_batman_adv.h	2015-04-03 15:02:52.894386339 +0200
+@@ -0,0 +1,32 @@
++/*
++ * Copyright 2012, Antonio Quartulli <ordex@autistici.org>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ */
++
++#include "ieee80211_i.h"
++#include <net/batman-adv.h>
++
++#ifndef MAC80211_STA_TRACKING_BATMAN_ADV_H
++#define MAC80211_STA_TRACKING_BATMAN_ADV_H
++
++#ifdef CPTCFG_MAC80211_AP_STA_TRACKING_BATMAN_ADV
++
++static inline bool ieee80211_sta_tracking_is_in_batadv(uint8_t *addr)
++{
++	return batadv_is_mesh_client(addr);
++}
++
++#else
++
++static inline bool ieee80211_sta_tracking_is_in_batadv(uint8_t *addr)
++{
++	return true;
++}
++
++#endif /* CONFIG_MAC80211_AP_STA_TRACKING_BATMAN_ADV */
++
++#endif /* MAC80211_STA_TRACKING_BATMAN_ADV_H */
++
+diff -Nurw compat-wireless-2014-11-04.orig/net/mac80211/sta_tracking.c compat-wireless-2014-11-04/net/mac80211/sta_tracking.c
+--- compat-wireless-2014-11-04.orig/net/mac80211/sta_tracking.c	1970-01-01 01:00:00.000000000 +0100
++++ compat-wireless-2014-11-04/net/mac80211/sta_tracking.c	2015-04-03 15:02:52.894386339 +0200
+@@ -0,0 +1,250 @@
++/*
++ * Copyright 2012, Antonio Quartulli <ordex@autistici.org>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ */
++
++#include "sta_tracking.h"
++#include "sta_tracking_batman_adv.h"
++#include "ieee80211_i.h"
++#include <linux/atomic.h>
++
++/* Caller must hold local->sta_tracking_lock */
++static int ieee80211_sta_tracking_hash_del(struct ieee80211_local *local,
++				       struct ieee80211_sta_tracking *sta)
++{
++	struct ieee80211_sta_tracking *s;
++	int index = IEEE80211_STA_TRACKING_HASH(sta->addr);
++
++	s = rcu_dereference_protected(local->sta_tracking_hash[index],
++				      lockdep_is_held(&local->sta_tracking_lock));
++	if (!s)
++		return -ENOENT;
++	if (s == sta) {
++		rcu_assign_pointer(local->sta_tracking_hash[index], s->hnext);
++		return 0;
++	}
++
++	while (rcu_access_pointer(s->hnext) &&
++	       rcu_access_pointer(s->hnext) != sta)
++		s = rcu_dereference_protected(s->hnext,
++					lockdep_is_held(&local->sta_tracking_lock));
++	if (rcu_access_pointer(s->hnext)) {
++		rcu_assign_pointer(s->hnext, sta->hnext);
++		return 0;
++	}
++
++	return -ENOENT;
++}
++
++static struct ieee80211_sta_tracking *
++ieee80211_sta_tracking_hash_get(struct ieee80211_local *local, uint8_t *addr)
++{
++	struct ieee80211_sta_tracking *sta;
++	int index;
++
++	index = IEEE80211_STA_TRACKING_HASH(addr);
++
++	rcu_read_lock();
++	sta = rcu_dereference_check(local->sta_tracking_hash[index],
++				    lockdep_is_held(&local->sta_tracking_lock));
++	while (sta) {
++		if (ether_addr_equal(sta->addr, addr))
++			break;
++		sta = rcu_dereference_check(sta->hnext,
++					    lockdep_is_held(&local->sta_tracking_lock));
++	}
++	rcu_read_unlock();
++
++	return sta;
++}
++
++static void ieee80211_sta_tracking_add(struct ieee80211_local *local,
++				   struct ieee80211_sta_tracking *sta)
++{
++	int index = IEEE80211_STA_TRACKING_HASH(sta->addr);
++
++	spin_lock_bh(&local->sta_tracking_lock);
++	sta->hnext = local->sta_tracking_hash[index];
++	rcu_assign_pointer(local->sta_tracking_hash[index], sta);
++	list_add_rcu(&sta->list, &local->sta_tracking_list);
++	spin_unlock_bh(&local->sta_tracking_lock);
++
++	/* start the periodic task only if there is at least one entry in the
++	 * table
++	 */
++	if (atomic_inc_return(&local->sta_tracking_num) == 1)
++		ieee80211_sta_tracking_start(local);
++}
++
++static void ieee80211_sta_tracking_destroy(struct ieee80211_local *local,
++				       struct ieee80211_sta_tracking *sta)
++{
++	spin_lock_bh(&local->sta_tracking_lock);
++	ieee80211_sta_tracking_hash_del(local, sta);
++	list_del_rcu(&sta->list);
++	spin_unlock_bh(&local->sta_tracking_lock);
++
++	atomic_dec(&local->sta_tracking_num);
++
++	kfree_rcu(sta, rcu);
++}
++
++static void ieee80211_sta_tracking_work(struct work_struct *work)
++{
++	struct ieee80211_sta_tracking *sta, *tmp;
++	unsigned long time = jiffies - IEEE80211_STA_TRACKING_INACTIVITY_LIMIT;
++	struct ieee80211_local *local = container_of(work,
++						     struct ieee80211_local,
++						     sta_tracking_dwork.work);
++
++	list_for_each_entry_safe(sta, tmp, &local->sta_tracking_list, list) {
++		if (time_before(time, sta->last_rssi_seen))
++			continue;
++
++		ieee80211_sta_tracking_destroy(local, sta);
++	}
++
++	/* if the table gets empty it is possible to stop the periodic task in
++	 * order to save some cpu cycles/power
++	 */
++	if (atomic_read(&local->sta_tracking_num))
++		ieee80211_sta_tracking_start(local);
++}
++
++static void ieee80211_sta_tracking_update_sta(struct ieee80211_local *local,
++					  uint8_t *addr, s8 rssi)
++{
++	struct ieee80211_sta_tracking *sta;
++
++	sta = ieee80211_sta_tracking_hash_get(local, addr);
++	if (!sta) {
++		sta = kmalloc(sizeof(*sta), GFP_ATOMIC);
++		if (!sta)
++			return;
++
++		memcpy(sta->addr, addr, ETH_ALEN);
++		ewma_init(&sta->avg_rssi, IEEE80211_STA_TRACKING_EWMA_FACT,
++			  IEEE80211_STA_TRACKING_EWMA_WEIGHT);
++		ewma_init(&sta->avg_ipi, IEEE80211_STA_TRACKING_EWMA_FACT,
++			  IEEE80211_STA_TRACKING_EWMA_WEIGHT);
++		sta->last_rssi_seen = jiffies;
++		sta->last_ipi_seen = (long unsigned int)-1;
++		sta->last_ipi = 0;
++		spin_lock_init(&sta->lock_rssi);
++		spin_lock_init(&sta->lock_ipi);
++		ieee80211_sta_tracking_add(local, sta);
++	}
++	spin_lock_bh(&sta->lock_rssi);
++	ewma_add(&sta->avg_rssi, -rssi);
++	sta->last_rssi = rssi;
++	sta->last_rssi_seen = jiffies;
++	spin_unlock_bh(&sta->lock_rssi);
++}
++
++void ieee80211_sta_tracking_init(struct ieee80211_local *local)
++{
++	INIT_DELAYED_WORK(&local->sta_tracking_dwork, ieee80211_sta_tracking_work);
++	INIT_LIST_HEAD(&local->sta_tracking_list);
++	spin_lock_init(&local->sta_tracking_lock);
++	atomic_set(&local->sta_tracking_num, 0);
++	/* this feature is disabled by default */
++	atomic_set(&local->sta_tracking_state, 0);
++}
++
++void ieee80211_sta_tracking_start(struct ieee80211_local *local)
++{
++	ieee80211_queue_delayed_work(&local->hw, &local->sta_tracking_dwork,
++				     IEEE80211_STA_TRACKING_WORK_PERIOD);
++}
++
++void ieee80211_sta_tracking_stop(struct ieee80211_local *local)
++{
++	cancel_delayed_work_sync(&local->sta_tracking_dwork);
++}
++
++//void ieee80211_sta_tracking_update(struct ieee80211_rx_data *rx)
++void ieee80211_sta_tracking_update(struct sk_buff *skb, struct ieee80211_hw *hw)
++{
++	struct ieee80211_hdr *hdr;
++	struct ieee80211_mgmt *mgmt;
++//	struct sk_buff *skb = rx->skb;
++//	struct ieee80211_hw *hw = &rx->local->hw;
++	struct ieee80211_rx_status *status = IEEE80211_SKB_RXCB(skb);
++	uint8_t *addr = NULL;
++
++	if (!atomic_read(&hw_to_local(hw)->sta_tracking_state))
++		return;
++
++	/* TODO: what do we do with DB and UNSPEC measures? */
++	if (!(hw->flags & IEEE80211_HW_SIGNAL_DBM))
++		return;
++
++	hdr = (struct ieee80211_hdr *)skb->data;
++	mgmt = (struct ieee80211_mgmt *)skb->data;
++
++	/* this is the main filter. Here only packets coming from stations and
++	 * directed to the AP has to be accepted:
++	 * 1) MGMT: */
++	if (ieee80211_is_mgmt(hdr->frame_control) &&
++	/*    a) PROBE REQ */
++	     (ieee80211_is_probe_req(hdr->frame_control) ||
++	/*    b) ASSOC REQ */
++	      ieee80211_is_assoc_req(hdr->frame_control) ||
++	/*    c) REASSOC REQ */
++	      ieee80211_is_reassoc_req(hdr->frame_control) ||
++	/*    d) AUTH with AUTH_TRANS = 1 */
++	      (ieee80211_is_auth(hdr->frame_control) &&
++	      mgmt->u.auth.auth_transaction == 1))) {
++		addr = hdr->addr2;
++	/* 2) TODS only QOS_DATA, QOS_NULL, DATA and NULL */
++	} else if (ieee80211_has_tods(hdr->frame_control) &&
++		 !ieee80211_has_fromds(hdr->frame_control)) {
++		/* 1) QOS DATA TODS */
++		if (ieee80211_is_data_qos(hdr->frame_control) ||
++		/* 2) QOS NULL TODS */
++		     ieee80211_is_qos_nullfunc(hdr->frame_control) ||
++		/* 3) DATA TODS */
++		     ieee80211_is_data(hdr->frame_control) ||
++		/* 4) NULL TODS */
++		     ieee80211_is_nullfunc(hdr->frame_control))
++			addr = hdr->addr2;
++	}
++
++	if (addr)
++		ieee80211_sta_tracking_update_sta(hw_to_local(hw), addr,
++					      status->signal);
++	return;
++}
++
++void ieee80211_sta_tracking_update_ipi(struct ieee80211_local *local, uint8_t *addr)
++{
++	struct ieee80211_sta_tracking *sta;
++	long unsigned int now;
++
++	if (!atomic_read(&local->sta_tracking_state))
++		return;
++
++	sta = ieee80211_sta_tracking_hash_get(local, addr);
++	if (WARN(!sta, "Missing sta_tracking %pM while updating ipi!\n", addr))
++		return;
++
++	spin_lock_bh(&sta->lock_ipi);
++	/* if this is the first sampling, simply store the current time */
++	if (sta->last_ipi_seen == (long unsigned int)-1) {
++		sta->last_ipi_seen = jiffies;
++		spin_unlock_bh(&sta->lock_ipi);
++		return;
++	}
++
++
++	now = jiffies;
++	sta->last_ipi = now - sta->last_ipi_seen;
++	sta->last_ipi_seen = now;
++	ewma_add(&sta->avg_ipi, sta->last_ipi);
++
++	spin_unlock_bh(&sta->lock_ipi);
++
++}
+diff -Nurw compat-wireless-2014-11-04.orig/net/mac80211/sta_tracking.h compat-wireless-2014-11-04/net/mac80211/sta_tracking.h
+--- compat-wireless-2014-11-04.orig/net/mac80211/sta_tracking.h	1970-01-01 01:00:00.000000000 +0100
++++ compat-wireless-2014-11-04/net/mac80211/sta_tracking.h	2015-04-03 15:04:41.627383649 +0200
+@@ -0,0 +1,95 @@
++/*
++ * Copyright 2012-2016, Antonio Quartulli <antonio@open-mesh.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ */
++
++#include <linux/average.h>
++#include <linux/if_ether.h>
++#include <linux/types.h>
++
++#ifndef MAC80211_STA_TRACKING_H
++#define MAC80211_STA_TRACKING_H
++
++#define IEEE80211_STA_TRACKING_HASH_SIZE		256
++#define IEEE80211_STA_TRACKING_HASH(addr)		(addr[5])
++
++/* delayed work period in jiffies */
++#define IEEE80211_STA_TRACKING_WORK_PERIOD		(10 * HZ)
++#define IEEE80211_STA_TRACKING_INACTIVITY_LIMIT		(60 * HZ)
++
++#define IEEE80211_STA_TRACKING_EWMA_FACT		2
++#define IEEE80211_STA_TRACKING_EWMA_WEIGHT		2
++
++/**
++ * struct ieee80211_sta_tracking - store the rssi stats of a non associated sta
++ * @addr: mac address of the station
++ * @avg_rssi: ewma of the received rssi values
++ * @last_rssi: value of the last rssi
++ * @last_seen: time in jiffies when this entry was refreshed last time
++ * @lock: lock that protects the rssi values of the station
++ * @list: list node for ieee80211_local::sta_tracking_list
++ * @rcu: struct used for freeing in an RCU-safe manner
++ * @hnext: pointer to the next station in the list
++ */
++struct ieee80211_sta_tracking {
++	u8 addr[ETH_ALEN];
++	/* RSSI sampling */
++	struct ewma avg_rssi;
++	s8 last_rssi;
++	long unsigned int last_rssi_seen;
++	/* ipi sampling for pkt/s computation */
++	struct ewma avg_ipi;
++	long unsigned int last_ipi;
++	long unsigned int last_ipi_seen;
++	spinlock_t lock_rssi; /* protects the rssi values */
++	spinlock_t lock_ipi; /* protects the ipi values */
++	struct list_head list;
++	struct rcu_head rcu;
++	struct ieee80211_sta_tracking *hnext;
++};
++
++struct ieee80211_local;
++struct ieee80211_rx_data;
++struct ieee80211_hw;
++
++#ifdef CPTCFG_MAC80211_AP_STA_TRACKING
++
++void ieee80211_sta_tracking_init(struct ieee80211_local *local);
++void ieee80211_sta_tracking_start(struct ieee80211_local *local);
++void ieee80211_sta_tracking_stop(struct ieee80211_local *local);
++void ieee80211_sta_tracking_update(struct sk_buff *skb,
++				   struct ieee80211_hw *hw);
++
++void ieee80211_sta_tracking_update_ipi(struct ieee80211_local *local,
++				       uint8_t *addr);
++
++#else
++
++static inline void ieee80211_sta_tracking_init(struct ieee80211_local *local)
++{
++}
++
++static inline void ieee80211_sta_tracking_start(struct ieee80211_local *local)
++{
++}
++
++static inline void ieee80211_sta_tracking_stop(struct ieee80211_local *local)
++{
++}
++
++static inline void ieee80211_sta_tracking_update(struct sk_buff *skb,
++						 struct ieee80211_hw *hw)
++{
++}
++
++static inline void ieee80211_sta_tracking_update_ipi(struct ieee80211_local *local,
++				   uint8_t *addr)
++{
++}
++
++#endif /* CONFIG_MAC80211_AP_STA_TRACKING */
++
++#endif /* MAC80211_STA_TRACKING_H */
+diff -Nurw compat-wireless-2014-11-04.orig/net/wireless/nl80211.c compat-wireless-2014-11-04/net/wireless/nl80211.c
+--- compat-wireless-2014-11-04.orig/net/wireless/nl80211.c	2015-04-03 15:02:49.825386415 +0200
++++ compat-wireless-2014-11-04/net/wireless/nl80211.c	2015-04-03 15:02:52.895386339 +0200
+@@ -2397,6 +2397,13 @@
+ 			goto nla_put_failure;
+ 	}
+ 
++	if (dev->ieee80211_ptr->ssid_len) {
++		if (nla_put(msg, NL80211_ATTR_SSID,
++			    dev->ieee80211_ptr->ssid_len,
++			    dev->ieee80211_ptr->ssid))
++			goto nla_put_failure;
++	}
++
+ 	return genlmsg_end(msg, hdr);
+ 
+  nla_put_failure:

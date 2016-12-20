@@ -1,0 +1,48 @@
+Forwarded: no
+
+--- a/drivers/net/wireless/ath/ath9k/debug.h
++++ b/drivers/net/wireless/ath/ath9k/debug.h
+@@ -50,6 +50,7 @@ enum ath_reset_type {
+ 	RESET_TYPE_BEACON_STUCK,
+ 	RESET_TYPE_MCI,
+ 	RESET_TYPE_CALIBRATION,
++	RESET_TYPE_DEADBEEF,
+ 	__RESET_TYPE_MAX
+ };
+ 
+--- a/drivers/net/wireless/ath/ath9k/debug.c
++++ b/drivers/net/wireless/ath/ath9k/debug.c
+@@ -858,6 +858,7 @@ static ssize_t read_file_reset(struct fi
+ 		[RESET_TYPE_BEACON_STUCK] = "Stuck Beacon",
+ 		[RESET_TYPE_MCI] = "MCI Reset",
+ 		[RESET_TYPE_CALIBRATION] = "Calibration error",
++		[RESET_TYPE_DEADBEEF] = "deadbeef hang",
+ 	};
+ 	char buf[512];
+ 	unsigned int len = 0;
+--- a/drivers/net/wireless/ath/ath9k/link.c
++++ b/drivers/net/wireless/ath/ath9k/link.c
+@@ -308,6 +308,7 @@ void ath_ani_calibrate(unsigned long dat
+ 	unsigned int timestamp = jiffies_to_msecs(jiffies);
+ 	u32 cal_interval, short_cal_interval, long_cal_interval;
+ 	unsigned long flags;
++	u32 reg;
+ 
+ 	if (ah->caldata && test_bit(NFCAL_INTF, &ah->caldata->cal_flags))
+ 		long_cal_interval = ATH_LONG_CALINTERVAL_INT;
+@@ -333,6 +334,15 @@ void ath_ani_calibrate(unsigned long dat
+ 
+ 	ath9k_ps_wakeup(sc);
+ 
++	/* check for stucked MAC */
++	reg = REG_READ(sc->sc_ah, AR_CFG);
++	if (reg == 0xdeadbeef) {
++		ath_dbg(common, RESET,
++			"Deadbeef hang is detected. Schedule chip reset\n");
++		WARN_ON(reg == 0xdeadbeef);
++		ath9k_queue_reset(sc, RESET_TYPE_DEADBEEF);
++	}
++
+ 	/* Long calibration runs independently of short calibration. */
+ 	if ((timestamp - common->ani.longcal_timer) >= long_cal_interval) {
+ 		longcal = true;

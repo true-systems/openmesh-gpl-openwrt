@@ -1,0 +1,62 @@
+From e81a148b9d68c2b3f7cbef78bd46d9355e464f4d Mon Sep 17 00:00:00 2001
+From: Sven Eckelmann <sven@narfation.org>
+Date: Thu, 5 Dec 2013 15:30:20 +0100
+Subject: [PATCH] Print bad irqs as emergency to save them in crashlog
+
+Forwarded: not-needed
+ Only for internal debugging purposes
+---
+ kernel/irq/spurious.c | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/kernel/irq/spurious.c b/kernel/irq/spurious.c
+index a1d8cc6..e38eada 100644
+--- a/kernel/irq/spurious.c
++++ b/kernel/irq/spurious.c
+@@ -13,6 +13,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/moduleparam.h>
+ #include <linux/timer.h>
++#include <linux/kmsg_dump.h>
+ 
+ #include "internals.h"
+ 
+@@ -196,14 +197,14 @@ __report_bad_irq(unsigned int irq, struct irq_desc *desc,
+ 	unsigned long flags;
+ 
+ 	if (bad_action_ret(action_ret)) {
+-		printk(KERN_ERR "irq event %d: bogus return value %x\n",
++		printk(KERN_EMERG "irq event %d: bogus return value %x\n",
+ 				irq, action_ret);
+ 	} else {
+-		printk(KERN_ERR "irq %d: nobody cared (try booting with "
++		printk(KERN_EMERG "irq %d: nobody cared (try booting with "
+ 				"the \"irqpoll\" option)\n", irq);
+ 	}
+ 	dump_stack();
+-	printk(KERN_ERR "handlers:\n");
++	printk(KERN_EMERG "handlers:\n");
+ 
+ 	/*
+ 	 * We need to take desc->lock here. note_interrupt() is called
+@@ -214,7 +215,7 @@ __report_bad_irq(unsigned int irq, struct irq_desc *desc,
+ 	raw_spin_lock_irqsave(&desc->lock, flags);
+ 	action = desc->action;
+ 	while (action) {
+-		printk(KERN_ERR "[<%p>] %pf", action->handler, action->handler);
++		printk(KERN_EMERG "[<%p>] %pf", action->handler, action->handler);
+ 		if (action->thread_fn)
+ 			printk(KERN_CONT " threaded [<%p>] %pf",
+ 					action->thread_fn, action->thread_fn);
+@@ -222,6 +223,8 @@ __report_bad_irq(unsigned int irq, struct irq_desc *desc,
+ 		action = action->next;
+ 	}
+ 	raw_spin_unlock_irqrestore(&desc->lock, flags);
++
++	kmsg_dump(KMSG_DUMP_EMERG);
+ }
+ 
+ static void
+-- 
+1.8.5.1
+

@@ -1,0 +1,62 @@
+From b6c8e287f6089559146e2a388a63fbe5460d7f44 Mon Sep 17 00:00:00 2001
+From: Sujith Manoharan <c_manoha@qca.qualcomm.com>
+Date: Mon, 12 Jan 2015 12:30:02 +0200
+Subject: [PATCH 2/2] ath10k: Enable RX batching
+
+This feature allows the FW to batch RX indications,
+reducing the rate of host interrupt generation, which
+in turn reduces CPU load. Currently, this is enabled
+only for the 10.2 firmware.
+
+Signed-off-by: Sujith Manoharan <c_manoha@qca.qualcomm.com>
+Signed-off-by: Kalle Valo <kvalo@qca.qualcomm.com>
+
+Origin: backport, https://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git/commit/?id=b6c8e287f6089559146e2a388a63fbe5460d7f44
+---
+ drivers/net/wireless/ath/ath10k/wmi.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/wireless/ath/ath10k/wmi.c
++++ b/drivers/net/wireless/ath/ath10k/wmi.c
+@@ -3272,7 +3272,7 @@ static int ath10k_wmi_10_2_cmd_init(stru
+ 	struct wmi_init_cmd_10_2 *cmd;
+ 	struct sk_buff *buf;
+ 	struct wmi_resource_config_10x config = {};
+-	u32 len, val;
++	u32 len, val, features;
+ 
+ 	config.num_vdevs = __cpu_to_le32(TARGET_10X_NUM_VDEVS);
+ 	config.num_peers = __cpu_to_le32(TARGET_10X_NUM_PEERS);
+@@ -3326,6 +3326,9 @@ static int ath10k_wmi_10_2_cmd_init(stru
+ 
+ 	cmd = (struct wmi_init_cmd_10_2 *)buf->data;
+ 
++	features = WMI_10_2_RX_BATCH_MODE;
++	cmd->resource_config.feature_mask = __cpu_to_le32(features);
++
+ 	memcpy(&cmd->resource_config.common, &config, sizeof(config));
+ 	ath10k_wmi_put_host_mem_chunks(ar, &cmd->mem_chunks);
+ 
+--- a/drivers/net/wireless/ath/ath10k/wmi.h
++++ b/drivers/net/wireless/ath/ath10k/wmi.h
+@@ -1859,6 +1859,11 @@ struct wmi_resource_config_10x {
+ 	__le32 max_frag_entries;
+ } __packed;
+ 
++enum wmi_10_2_feature_mask {
++	WMI_10_2_RX_BATCH_MODE = BIT(0),
++	WMI_10_2_ATF_CONFIG    = BIT(1),
++};
++
+ struct wmi_resource_config_10_2 {
+ 	struct wmi_resource_config_10x common;
+ 	__le32 max_peer_ext_stats;
+@@ -1867,7 +1872,7 @@ struct wmi_resource_config_10_2 {
+ 	__le32 be_min_free;
+ 	__le32 vi_min_free;
+ 	__le32 vo_min_free;
+-	__le32 rx_batchmode; /* 0-disable, 1-enable */
++	__le32 feature_mask;
+ } __packed;
+ 
+ #define NUM_UNITS_IS_NUM_VDEVS   0x1
